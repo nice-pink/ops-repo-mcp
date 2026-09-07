@@ -133,9 +133,11 @@ configuration.
 ## Versioning
 
 `plugin.json` and the skills' `metadata.version` track the MCP server version they
-document (currently `0.1.0`, matching `serverVersion` in
-[`cmd/mcp-server/main.go`](../cmd/mcp-server/main.go)). When the tool surface or the
-response shape changes, update the skills and bump the version in all six places:
+document (currently `0.1.0`). That is a released server version, i.e. a `v<N>` release
+tag minus its `v` — not the `serverVersion` default in
+[`cmd/mcp-server/main.go`](../cmd/mcp-server/main.go), which is `dev` and only labels
+unreleased local builds. When the tool surface or the response shape changes, update
+the skills and bump the version in all six places:
 
 ```
 agents-plugin/plugin.json

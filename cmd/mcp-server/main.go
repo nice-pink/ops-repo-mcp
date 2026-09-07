@@ -13,9 +13,11 @@ import (
 const serverName = "deploy-promote-mcp"
 
 // serverVersion is overridden at build time with
-// -ldflags "-X main.serverVersion=<version>" by .github/workflows/release-mcp-server.yml.
+// -ldflags "-X main.serverVersion=<version>" by .github/workflows/release-mcp-server.yml,
+// which passes the release tag minus its "v". The "dev" default is therefore
+// what an unreleased local build reports, and is never what ships.
 // It must stay a var: -X cannot patch a const.
-var serverVersion = "0.1.0"
+var serverVersion = "dev"
 
 func main() {
 	// Handle --version flag before anything else (so stdout contains only JSON)
