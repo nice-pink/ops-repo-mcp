@@ -4,7 +4,40 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
 )
+
+// baseHandler is the process-wide log destination installed by main(). It MUST
+// write straight to an io.Writer.
+//
+// callRunner composes this handler with a per-call buffer sink and installs the
+// pair with slog.SetDefault, which also redirects the standard log package into
+// that composition. A base handler that itself logs *through* the log package
+// therefore closes a loop: record -> multiHandler -> base -> log.Output (takes
+// log.Logger's mutex) -> redirected writer -> multiHandler -> base ->
+// log.Output (wants the same mutex) -> deadlock, because that mutex is not
+// reentrant.
+//
+// slog's zero-value default handler is exactly such a handler, so composing
+// with whatever slog.Default() happens to be at call time is unsafe in any
+// binary where main() has not run — a test binary above all. Capturing the base
+// explicitly is what keeps the loop from forming.
+var baseHandler slog.Handler
+
+// setBaseHandler installs h as both the base handler and the slog default.
+func setBaseHandler(h slog.Handler) {
+	baseHandler = h
+	slog.SetDefault(slog.New(h))
+}
+
+// currentBaseHandler returns the installed base handler, falling back to a
+// stderr TextHandler when main() has not run.
+func currentBaseHandler() slog.Handler {
+	if baseHandler != nil {
+		return baseHandler
+	}
+	return slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+}
 
 // multiHandler is a slog.Handler that fans out every log record to two or
 // more child handlers. All four interface methods propagate to both children.

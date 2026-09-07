@@ -38,8 +38,11 @@ func (h *handler) callRunner(parentCtx context.Context, toolName string, fn func
 	// Per-call slog sink (set BEFORE goroutine spawns so the runner inherits it).
 	var buf limitedBuffer
 	sink := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	// Compose with the explicitly captured base handler, never with
+	// prev.Handler(): see baseHandler in slogsink.go for why reading
+	// slog.Default() here can deadlock.
 	prev := slog.Default()
-	slog.SetDefault(slog.New(newMultiHandler(prev.Handler(), sink)))
+	slog.SetDefault(slog.New(newMultiHandler(currentBaseHandler(), sink)))
 
 	type result struct{ err error }
 	ch := make(chan result, 1)

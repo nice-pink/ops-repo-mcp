@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,7 +18,7 @@ func TestRunnerPanicRecovery(t *testing.T) {
 	}
 
 	// Suppress slog output during test
-	slog.SetDefault(slog.New(slog.NewTextHandler(noopWriter{}, &slog.HandlerOptions{Level: slog.LevelError})))
+	setBaseHandler(slog.NewTextHandler(noopWriter{}, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	fn := func() error {
 		panic("synthetic test panic")
@@ -51,7 +53,7 @@ func TestRunnerTimeoutLockOwnership(t *testing.T) {
 		repoMu: newTimedMu(),
 	}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(noopWriter{}, &slog.HandlerOptions{Level: slog.LevelError})))
+	setBaseHandler(slog.NewTextHandler(noopWriter{}, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	// Channel to signal when the slow goroutine has started.
 	started := make(chan struct{})
@@ -117,3 +119,71 @@ func TestRunnerTimeoutLockOwnership(t *testing.T) {
 type noopWriter struct{}
 
 func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestCallRunnerComposesWithBaseHandler pins the fix for a deadlock that hung
+// CI for the full 10-minute test timeout.
+//
+// callRunner used to build its per-call multiHandler from slog.Default(). In a
+// test binary main() never runs, so slog.Default() was slog's zero-value
+// handler, which emits through the standard log package. slog.SetDefault then
+// redirects that same log package back into the composition, so the first
+// record logged by the runner re-entered log.Logger's non-reentrant mutex and
+// deadlocked: log.Output -> multiHandler -> default handler -> log.Output.
+//
+// The invariant is that callRunner composes with the explicitly captured base
+// handler and never with whatever slog.Default() happens to be. Asserting that
+// the record reaches the base and not the ambient default is what keeps a
+// future edit from reintroducing the cycle.
+func TestCallRunnerComposesWithBaseHandler(t *testing.T) {
+	h := &handler{
+		cfg:    serverConfig{LockTimeout: 2 * time.Second, RunnerTimeout: 5 * time.Second},
+		repoMu: newTimedMu(),
+	}
+
+	prevBase, prevDefault := baseHandler, slog.Default()
+	t.Cleanup(func() { baseHandler = prevBase; slog.SetDefault(prevDefault) })
+
+	var base, ambient bytes.Buffer
+	setBaseHandler(slog.NewTextHandler(&base, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// An ambient default distinct from the base: callRunner must ignore it.
+	slog.SetDefault(slog.New(slog.NewTextHandler(&ambient, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	done := make(chan string, 1)
+	go func() {
+		out, _ := h.callRunner(context.Background(), "test", func() error {
+			slog.Default().Error("marker-line")
+			return nil
+		})
+		done <- out
+	}()
+
+	var runnerOutput string
+	select {
+	case runnerOutput = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("callRunner deadlocked; the per-call sink is composed with a handler that re-enters the log package")
+	}
+
+	if !strings.Contains(runnerOutput, "marker-line") {
+		t.Errorf("per-call sink did not capture the record; got %q", runnerOutput)
+	}
+	if !strings.Contains(base.String(), "marker-line") {
+		t.Errorf("base handler did not receive the record; got %q", base.String())
+	}
+	if strings.Contains(ambient.String(), "marker-line") {
+		t.Error("callRunner composed with slog.Default() instead of the captured base handler")
+	}
+}
+
+// TestCurrentBaseHandlerFallbackWritesDirectly guards the other half: with no
+// base captured, the fallback must be a direct-writer handler. A fallback that
+// routed through the log package would re-arm the same deadlock.
+func TestCurrentBaseHandlerFallbackWritesDirectly(t *testing.T) {
+	prev := baseHandler
+	t.Cleanup(func() { baseHandler = prev })
+
+	baseHandler = nil
+	if _, ok := currentBaseHandler().(*slog.TextHandler); !ok {
+		t.Fatalf("fallback base handler must be a *slog.TextHandler, got %T", currentBaseHandler())
+	}
+}

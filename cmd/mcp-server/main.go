@@ -38,7 +38,7 @@ func main() {
 
 	// Configure slog to write to stderr
 	logHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel})
-	slog.SetDefault(slog.New(logHandler))
+	setBaseHandler(logHandler)
 
 	// Startup logs
 	slog.Default().Info("server_start",
