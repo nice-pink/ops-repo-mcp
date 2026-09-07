@@ -4,21 +4,24 @@ import "fmt"
 
 // Error codes as defined in the spec.
 const (
-	codeInvalidInput   = "INVALID_INPUT"
-	codeEnvNotAllowed  = "ENV_NOT_ALLOWED"
-	codeSameEnv        = "SAME_ENV"
-	codePathEscape     = "PATH_ESCAPE"
-	codeRepoNotFound   = "REPO_NOT_FOUND"
-	codeConfigError    = "CONFIG_ERROR"
-	codeDirtyRepo      = "DIRTY_REPO"
-	codeBranchAhead    = "BRANCH_AHEAD"
-	codePullFailed     = "PULL_FAILED"
-	codeNoCurrentTag   = "NO_CURRENT_TAG"
-	codeNoPrevVersion  = "NO_PREVIOUS_VERSION"
-	codeRunnerFailed   = "RUNNER_FAILED"
-	codeRunnerPanic    = "RUNNER_PANIC"
-	codeRunnerTimeout  = "RUNNER_TIMEOUT"
-	codeLockTimeout    = "LOCK_TIMEOUT"
+	codeInvalidInput     = "INVALID_INPUT"
+	codeEnvNotAllowed    = "ENV_NOT_ALLOWED"
+	codeSameEnv          = "SAME_ENV"
+	codePathEscape       = "PATH_ESCAPE"
+	codeRepoNotFound     = "REPO_NOT_FOUND"
+	codeConfigError      = "CONFIG_ERROR"
+	codeDirtyRepo        = "DIRTY_REPO"
+	codeBranchAhead      = "BRANCH_AHEAD"
+	codeBranchNotAllowed = "BRANCH_NOT_ALLOWED"
+	codeNoUpstream       = "NO_UPSTREAM"
+	codePullFailed       = "PULL_FAILED"
+	codeNoCurrentTag     = "NO_CURRENT_TAG"
+	codeNoPrevVersion    = "NO_PREVIOUS_VERSION"
+	codeMultiLineChange  = "MULTI_LINE_CHANGE"
+	codeRunnerFailed     = "RUNNER_FAILED"
+	codeRunnerPanic      = "RUNNER_PANIC"
+	codeRunnerTimeout    = "RUNNER_TIMEOUT"
+	codeLockTimeout      = "LOCK_TIMEOUT"
 )
 
 type mcpError struct {
@@ -63,6 +66,30 @@ func errBranchAhead(n int) *mcpError {
 	}
 }
 
+func errBranchNotAllowed(current string, allowed []string, source string) *mcpError {
+	return &mcpError{
+		code:    codeBranchNotAllowed,
+		message: fmt.Sprintf("ops repo is on branch %q, which is not in the allowed set %v (from %s)", current, allowed, source),
+		hint:    fmt.Sprintf("check out an allowed branch in the ops repo, or set MCP_ALLOWED_BRANCHES to include %q if writing there is intended", current),
+	}
+}
+
+func errDetachedHead(reason string) *mcpError {
+	return &mcpError{
+		code:    codeBranchNotAllowed,
+		message: fmt.Sprintf("cannot determine the ops repo branch: %s", reason),
+		hint:    "check out a branch in the ops repo; a detached HEAD cannot be pushed",
+	}
+}
+
+func errNoUpstream(branch string) *mcpError {
+	return &mcpError{
+		code:    codeNoUpstream,
+		message: fmt.Sprintf("branch %q has no upstream (origin/%s); a commit here could not be pushed", branch, branch),
+		hint:    fmt.Sprintf("run 'git push -u origin %s' in the ops repo, or switch to a tracked branch", branch),
+	}
+}
+
 func errPullFailed(err error) *mcpError {
 	return &mcpError{code: codePullFailed, message: err.Error()}
 }
@@ -83,6 +110,32 @@ func errNoPrevVersion(app, env, reason string) *mcpError {
 	}
 }
 
+// errMultiLineChange refuses a rollback whose target commit changed more than
+// the image tag. Reverting only the tag would leave the other edits in place,
+// producing old image + new configuration — a combination that has never run
+// anywhere. The caller must look at the commit and opt in explicitly.
+func errMultiLineChange(app, env, currentTag, previousTag, lastCommit string, nonTagLines int, manifest string) *mcpError {
+	current := currentTag
+	extra := ""
+	if current == "" {
+		current = "(could not be read)"
+		// An unreadable current tag makes every differing line count as a
+		// non-tag change, so the count is not evidence of a wide commit.
+		extra = " The current tag could not be read from the manifest, so nonTagLineChanges counts every differing line and may overstate the change."
+	}
+	return &mcpError{
+		code: codeMultiLineChange,
+		message: fmt.Sprintf(
+			"refusing to roll back %s(%s) from %s to %s: commit %s changed %d line(s) in %s beyond the image tag, and a tag-only revert would leave those in place (old image, new configuration).%s",
+			app, env, current, previousTag, lastCommit, nonTagLines, manifest, extra,
+		),
+		hint: fmt.Sprintf(
+			"inspect it with 'git -C <opsRepoPath> show %s'. To revert the tag only, call rollback again with acknowledgeMultiLineChange=true. To undo the whole commit, use git revert instead.",
+			lastCommit,
+		),
+	}
+}
+
 func errRunnerFailed(err error) *mcpError {
 	return &mcpError{code: codeRunnerFailed, message: err.Error()}
 }
@@ -93,6 +146,17 @@ func errRunnerPanic(v any) *mcpError {
 
 func errRunnerTimeout() *mcpError {
 	return &mcpError{code: codeRunnerTimeout, message: "runner goroutine did not return within MCP_RUNNER_TIMEOUT; goroutine leaked and lock held until it completes"}
+}
+
+// errLockHeldByLeakedRunner distinguishes "someone else is mid-call" from
+// "a previous call timed out and its runner never returned". The second needs a
+// restart, not a retry, and the ops repo may have been written meanwhile.
+func errLockHeldByLeakedRunner(n int64) *mcpError {
+	return &mcpError{
+		code:    codeLockTimeout,
+		message: fmt.Sprintf("could not acquire the repo lock: %d earlier runner call(s) exceeded MCP_RUNNER_TIMEOUT and never returned, so the lock is still held", n),
+		hint:    "this will not clear by retrying — restart the MCP server. Check 'git -C <opsRepoPath> status' first: the leaked runner may have written the manifest after its call already returned an error",
+	}
 }
 
 func errLockTimeout(err error) *mcpError {

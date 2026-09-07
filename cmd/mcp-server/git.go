@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"sort"
+	"strings"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing"
@@ -9,6 +11,42 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/storer"
 	"github.com/nice-pink/repo-services/pkg/util"
 )
+
+// errNoUpstreamRef reports that HEAD has no origin/<branch> tracking ref, so
+// there is nothing to compare against and nothing `git push` could target.
+var errNoUpstreamRef = errors.New("no upstream tracking ref")
+
+// currentBranch returns the short name of the branch HEAD points at.
+// A detached HEAD has no branch name and is reported as an error: the server
+// must never write a deploy into a commit nobody can push.
+func currentBranch(rh *util.RepoHandle) (string, error) {
+	headRef, err := rh.Repo().Head()
+	if err != nil {
+		return "", err
+	}
+	if !headRef.Name().IsBranch() {
+		return "", errors.New("HEAD is detached (not on a branch)")
+	}
+	return headRef.Name().Short(), nil
+}
+
+// defaultBranchFromOriginHEAD resolves refs/remotes/origin/HEAD to the branch
+// name it points at. A normal `git clone` sets this; a repo built with
+// `git init` + `git remote add` does not, so an empty return is expected and
+// means "cannot infer a default branch", not an error.
+func defaultBranchFromOriginHEAD(rh *util.RepoHandle) string {
+	ref, err := rh.Repo().Reference(plumbing.NewRemoteHEADReferenceName("origin"), false)
+	if err != nil {
+		return ""
+	}
+	target := ref.Target()
+	if target == "" || !target.IsRemote() {
+		return ""
+	}
+	// refs/remotes/origin/main -> main
+	short := target.Short()
+	return strings.TrimPrefix(short, "origin/")
+}
 
 // isWorkingTreeDirty returns (dirty, dirtyPaths, error).
 // It filters out untracked-only entries (e.g. .DS_Store) because an untracked
@@ -56,8 +94,11 @@ func isAheadOfUpstream(rh *util.RepoHandle) (bool, int, error) {
 	upstreamRefName := plumbing.NewRemoteReferenceName("origin", headRef.Name().Short())
 	upstreamRef, err := repo.Reference(upstreamRefName, true)
 	if err != nil {
-		// No upstream tracking ref — not an error for our purposes.
-		return false, 0, nil
+		// No upstream tracking ref. This used to be treated as "not ahead", which
+		// silently disabled the ahead-check: commits piled up locally, the bare
+		// `git push` in every commitDirective failed, and each call still reported
+		// success. A branch the server writes to must be publishable.
+		return false, 0, errNoUpstreamRef
 	}
 
 	upstreamHash := upstreamRef.Hash()

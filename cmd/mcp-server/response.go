@@ -24,15 +24,15 @@ type recoveryHint struct {
 
 // deploySuccessResponse is the JSON payload returned on a successful deploy call.
 type deploySuccessResponse struct {
-	Success         bool             `json:"success"`
-	DryRun          bool             `json:"dryRun"`
-	App             string           `json:"app"`
-	Env             string           `json:"env"`
-	Tag             string           `json:"tag"`
-	OpsRepoPath     string           `json:"opsRepoPath"`
-	CommitDirective commitDirective  `json:"commitDirective"`
-	RecoveryHint    *recoveryHint    `json:"recoveryHint,omitempty"`
-	RunnerOutput    string           `json:"runnerOutput"`
+	Success         bool            `json:"success"`
+	DryRun          bool            `json:"dryRun"`
+	App             string          `json:"app"`
+	Env             string          `json:"env"`
+	Tag             string          `json:"tag"`
+	OpsRepoPath     string          `json:"opsRepoPath"`
+	CommitDirective commitDirective `json:"commitDirective"`
+	RecoveryHint    *recoveryHint   `json:"recoveryHint,omitempty"`
+	RunnerOutput    string          `json:"runnerOutput"`
 }
 
 // rollbackSuccessResponse is the JSON payload returned on a successful rollback call.
@@ -60,16 +60,16 @@ type rollbackSuccessResponse struct {
 
 // promoteSuccessResponse is the JSON payload returned on a successful promote call.
 type promoteSuccessResponse struct {
-	Success         bool             `json:"success"`
-	DryRun          bool             `json:"dryRun"`
-	App             string           `json:"app"`
-	SrcEnv          string           `json:"srcEnv"`
-	DestEnv         string           `json:"destEnv"`
-	ResolvedTag     string           `json:"resolvedTag"`
-	OpsRepoPath     string           `json:"opsRepoPath"`
-	CommitDirective commitDirective  `json:"commitDirective"`
-	RecoveryHint    *recoveryHint    `json:"recoveryHint,omitempty"`
-	RunnerOutput    string           `json:"runnerOutput"`
+	Success         bool            `json:"success"`
+	DryRun          bool            `json:"dryRun"`
+	App             string          `json:"app"`
+	SrcEnv          string          `json:"srcEnv"`
+	DestEnv         string          `json:"destEnv"`
+	ResolvedTag     string          `json:"resolvedTag"`
+	OpsRepoPath     string          `json:"opsRepoPath"`
+	CommitDirective commitDirective `json:"commitDirective"`
+	RecoveryHint    *recoveryHint   `json:"recoveryHint,omitempty"`
+	RunnerOutput    string          `json:"runnerOutput"`
 }
 
 // errorResponse is the JSON payload returned on any tool error.
@@ -79,6 +79,15 @@ type errorResponse struct {
 	ErrorMessage string `json:"errorMessage"`
 	RecoveryHint string `json:"recoveryHint,omitempty"`
 	RunnerOutput string `json:"runnerOutput"`
+
+	// MayHaveWritten is set on errors raised after the runner started, where a
+	// manifest may already be modified on disk. DirtyPaths lists the affected
+	// paths actually found dirty, and PostFailureRecovery gives the commands to
+	// inspect or undo them. Absent on every error raised before the write phase,
+	// which is the normal case and means nothing was touched.
+	MayHaveWritten      bool          `json:"mayHaveWritten,omitempty"`
+	DirtyPaths          []string      `json:"dirtyPaths,omitempty"`
+	PostFailureRecovery *recoveryHint `json:"postFailureRecovery,omitempty"`
 }
 
 // buildDeployCommitDirective constructs the commitDirective and recoveryHint for deploy.

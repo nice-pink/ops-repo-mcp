@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sync/atomic"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nice-pink/repo-services/pkg/exceptional"
@@ -24,6 +26,17 @@ import (
 type handler struct {
 	cfg    serverConfig
 	repoMu *timedMu
+
+	// timedOutRunners counts runner goroutines that ever exceeded
+	// MCP_RUNNER_TIMEOUT. They cannot be cancelled, keep holding the repo lock,
+	// and may still write, so a later LOCK_TIMEOUT should say that rather than
+	// look like ordinary contention.
+	//
+	// It only ever increases, and deliberately so: it is read only when a lock
+	// acquisition has already failed. If the leaked goroutine had finished, the
+	// lock would be free and we would not be here — so a stale count cannot
+	// produce a wrong message, and no decrement (and no race) is needed.
+	timedOutRunners atomic.Int64
 }
 
 func newHandler(cfg serverConfig) *handler {
@@ -114,13 +127,13 @@ func (h *handler) buildFlags(app, namespace, env, base, cluster, image, imageFil
 		SrcPath:             srcPath,
 		VersionInfo:         versionInfo,
 		// Git flags — hardcoded for MCP (never push, never clone)
-		Push:    push,
-		Shallow: false,
-		Url:     emptyStr,
-		Branch:  emptyStr,
-		Token:   h.cfg.GitToken,
-		User:    h.cfg.GitUser,
-		Email:   h.cfg.GitEmail,
+		Push:       push,
+		Shallow:    false,
+		Url:        emptyStr,
+		Branch:     emptyStr,
+		Token:      h.cfg.GitToken,
+		User:       h.cfg.GitUser,
+		Email:      h.cfg.GitEmail,
 		SshKeyPath: h.cfg.GitSSHKeyPath,
 	})
 }
@@ -167,6 +180,62 @@ func (h *handler) checkAppPaths(app models.App) *mcpError {
 	return nil
 }
 
+// isRunnerPhaseCode reports whether an error code can be returned after the
+// runner has begun writing, i.e. whether the ops repo may already be modified.
+func isRunnerPhaseCode(code string) bool {
+	switch code {
+	case codeRunnerFailed, codeRunnerPanic, codeRunnerTimeout:
+		return true
+	}
+	return false
+}
+
+// dirtyAmong returns the subset of relPaths that git currently reports as
+// modified. Best-effort: if the repo cannot be inspected we say so by returning
+// no paths rather than failing the response we are already building.
+func (h *handler) dirtyAmong(relPaths []string) []string {
+	rh := util.NewRepoHandle(h.cfg.GitSSHKeyPath, h.cfg.GitToken, h.cfg.GitUser, h.cfg.GitEmail)
+	if err := rh.Open(h.cfg.OpsRepoPath); err != nil {
+		return nil
+	}
+	_, dirty, err := isWorkingTreeDirty(rh)
+	if err != nil {
+		return nil
+	}
+	var hit []string
+	for _, p := range relPaths {
+		if p != "" && slices.Contains(dirty, filepath.ToSlash(p)) {
+			hit = append(hit, p)
+		}
+	}
+	return hit
+}
+
+// toolRunnerError renders an error returned by callRunner. For codes that can
+// only arise once the runner is writing, it also reports whether the ops repo
+// is in fact modified now, so the caller does not have to be told out-of-band
+// that "error" does not mean "nothing happened".
+func (h *handler) toolRunnerError(e *mcpError, runnerOutput string, relPaths []string) (*mcp.CallToolResult, error) {
+	if !isRunnerPhaseCode(e.code) {
+		return toolMcpError(e, runnerOutput)
+	}
+
+	resp := errorResponse{
+		Success:        false,
+		ErrorCode:      e.code,
+		ErrorMessage:   e.message,
+		RecoveryHint:   e.hint,
+		RunnerOutput:   runnerOutput,
+		MayHaveWritten: true,
+		DirtyPaths:     h.dirtyAmong(relPaths),
+	}
+	if len(resp.DirtyPaths) > 0 {
+		resp.PostFailureRecovery = buildRecoveryHint(h.cfg.OpsRepoPath, resp.DirtyPaths,
+			"WIP: incomplete "+e.code+" — review before committing")
+	}
+	return toolResult(resp)
+}
+
 // prePullSequence runs inside the runner goroutine (under the lock):
 // 1. Opens the repo.
 // 2. Refuses if the working tree is dirty (tracked changes only).
@@ -179,6 +248,25 @@ func (h *handler) prePullSequence() error {
 		return errPullFailed(fmt.Errorf("open: %w", err))
 	}
 
+	// Branch guard first: being on the wrong branch is the one failure the
+	// operator cannot see in the response, because everything else succeeds.
+	branch, brErr := currentBranch(rh)
+	if brErr != nil {
+		return errDetachedHead(brErr.Error())
+	}
+	allowed := h.cfg.AllowedBranches
+	if len(allowed) == 0 {
+		// Nothing configured: infer the repo's default branch. A repo without
+		// refs/remotes/origin/HEAD cannot tell us, and the startup log already
+		// warned that no guard is active.
+		if def := defaultBranchFromOriginHEAD(rh); def != "" {
+			allowed = []string{def}
+		}
+	}
+	if len(allowed) > 0 && !slices.Contains(allowed, branch) {
+		return errBranchNotAllowed(branch, allowed, h.cfg.AllowedBranchSource)
+	}
+
 	dirty, dirtyPaths, err := isWorkingTreeDirty(rh)
 	if err != nil {
 		return errPullFailed(fmt.Errorf("status: %w", err))
@@ -189,6 +277,9 @@ func (h *handler) prePullSequence() error {
 
 	ahead, aheadBy, err := isAheadOfUpstream(rh)
 	if err != nil {
+		if errors.Is(err, errNoUpstreamRef) {
+			return errNoUpstream(branch)
+		}
 		return errPullFailed(fmt.Errorf("ahead-check: %w", err))
 	}
 	if ahead {
@@ -319,10 +410,11 @@ func (h *handler) HandleDeploy(ctx context.Context, req mcp.CallToolRequest) (*m
 	runnerOutput, runErr := h.callRunner(ctx, "deploy", fn)
 
 	if runErr != nil {
+		affected := []string{relManifest, relHistory}
 		if me, ok := runErr.(*mcpError); ok {
-			return toolMcpError(me, runnerOutput)
+			return h.toolRunnerError(me, runnerOutput, affected)
 		}
-		return toolMcpError(errRunnerFailed(runErr), runnerOutput)
+		return h.toolRunnerError(errRunnerFailed(runErr), runnerOutput, affected)
 	}
 
 	// --- Build response ---
@@ -359,6 +451,7 @@ func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (
 	env := req.GetString("env", "")
 	namespace := req.GetString("namespace", h.cfg.DSNamespace)
 	dryRun := req.GetBool("dryRun", false)
+	ackMultiLine := req.GetBool("acknowledgeMultiLineChange", false)
 
 	if e := validateField("app", app, reAppEnv); e != nil {
 		return toolMcpError(e, "")
@@ -373,7 +466,7 @@ func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	args := req.GetArguments()
-	allowed := map[string]bool{"app": true, "env": true, "namespace": true, "dryRun": true}
+	allowed := map[string]bool{"app": true, "env": true, "namespace": true, "dryRun": true, "acknowledgeMultiLineChange": true}
 	for k := range args {
 		if !allowed[k] {
 			return toolMcpError(errInvalidInput(fmt.Sprintf("unknown field %q (additionalProperties: false)", k)), "")
@@ -462,6 +555,14 @@ func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (
 			return nil
 		}
 
+		// Gate the write on an explicit acknowledgement when the commit being
+		// reverted touched more than the tag. A dry run still reports the
+		// analysis, so the caller can see what it is acknowledging.
+		if analysis.nonTagLines > 0 && !ackMultiLine {
+			return errMultiLineChange(app, env, analysis.currentTag, analysis.previousTag,
+				analysis.lastCommitHash, analysis.nonTagLines, relManifest)
+		}
+
 		// Apply the previous tag via the same path Deploy uses (atomic write +
 		// history-file append).
 		if err := runner.Deploy(analysis.previousTag, exceptionalAppsFile, flags, gitFlags); err != nil {
@@ -477,10 +578,11 @@ func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (
 
 	runnerOutput, runErr := h.callRunner(ctx, "rollback", fn)
 	if runErr != nil {
+		affected := []string{relManifest, relHistory}
 		if me, ok := runErr.(*mcpError); ok {
-			return toolMcpError(me, runnerOutput)
+			return h.toolRunnerError(me, runnerOutput, affected)
 		}
-		return toolMcpError(errRunnerFailed(runErr), runnerOutput)
+		return h.toolRunnerError(errRunnerFailed(runErr), runnerOutput, affected)
 	}
 
 	// --- Build response ---
@@ -667,10 +769,11 @@ func (h *handler) HandlePromote(ctx context.Context, req mcp.CallToolRequest) (*
 	runnerOutput, runErr := h.callRunner(ctx, "promote", fn)
 
 	if runErr != nil {
+		affected := []string{relManifest, relHistory}
 		if me, ok := runErr.(*mcpError); ok {
-			return toolMcpError(me, runnerOutput)
+			return h.toolRunnerError(me, runnerOutput, affected)
 		}
-		return toolMcpError(errRunnerFailed(runErr), runnerOutput)
+		return h.toolRunnerError(errRunnerFailed(runErr), runnerOutput, affected)
 	}
 
 	// --- Build response ---

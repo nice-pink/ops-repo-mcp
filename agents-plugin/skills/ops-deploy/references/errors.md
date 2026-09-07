@@ -25,20 +25,36 @@ responses.
 
 ## What may already have been written
 
-Nothing was written for any code in the "Retry unchanged", "Fix the ops repo", "Fix the
-call", or "Fix the server config" groups below. Those all return before the runner is
-invoked, so there is no partial state — except the pre-existing mess `DIRTY_REPO` is
-reporting, which an earlier call left behind.
+**The response tells you.** Errors raised after the runner started carry:
 
-`RUNNER_FAILED` and `RUNNER_TIMEOUT` are different: the runner had already started, so the
-manifest may be modified on disk. **Check `git -C <opsRepoPath> status` before deciding
-what to do next**, and do not report the operation as a clean no-op.
+```json
+{
+  "success": false,
+  "errorCode": "RUNNER_FAILED",
+  "mayHaveWritten": true,
+  "dirtyPaths": ["base/apps/poma-mcp/prod/deployment.yaml"],
+  "postFailureRecovery": { "detectCommand": "...", "discardCommand": "...", "completeCommand": "..." }
+}
+```
+
+`mayHaveWritten` appears only on `RUNNER_FAILED`, `RUNNER_PANIC` and `RUNNER_TIMEOUT` —
+the three codes that can be returned once the runner is writing. Every other code is
+raised before the write phase and leaves the repo untouched, except the pre-existing mess
+`DIRTY_REPO` is reporting.
+
+`dirtyPaths` is what git reports as modified **now**. An empty or absent `dirtyPaths`
+alongside `mayHaveWritten: true` means the runner failed before changing anything — say
+that, rather than alarming the user. When it is non-empty, show the paths and offer
+`postFailureRecovery.discardCommand`; never leave them for the next call to trip over.
+
+After a `RUNNER_TIMEOUT` the runner is **still running**, so `dirtyPaths` is a snapshot of
+a moving target. Re-check with `detectCommand` before acting.
 
 ## Retry unchanged
 
 | Code | Meaning | What to do |
 |---|---|---|
-| `LOCK_TIMEOUT` | This call waited longer than `MCP_LOCK_TIMEOUT` for the per-repo lock and gave up. The timeout bounds *your* wait, not the holder's runtime. | Retry once. If it recurs, a leaked runner goroutine is holding the lock (see `RUNNER_TIMEOUT`) — restart the server. |
+| `LOCK_TIMEOUT` | This call waited longer than `MCP_LOCK_TIMEOUT` for the per-repo lock and gave up. The timeout bounds *your* wait, not the holder's runtime. | **Read the message.** Ordinary contention ("could not acquire repo lock within MCP_LOCK_TIMEOUT") is worth one retry. If it says *"N earlier runner call(s) exceeded MCP_RUNNER_TIMEOUT and never returned"*, retrying is pointless — the lock is held by a goroutine that cannot be cancelled. Tell the user to restart the server, and to check `git status` on the ops repo first because that runner may still be writing. |
 | `PULL_FAILED` | The pre-flight failed before any write. Either the `git fetch` / fast-forward against the remote failed, or the repo could not be opened or inspected at all. | Check the `errorMessage` prefix. `open:`, `status:`, or `ahead-check:` means `MCP_OPS_REPO_PATH` is not a usable git clone — fix the path, do not retry. An unprefixed message is the remote: retry once for a transient network error, otherwise check `MCP_GIT_SSH_KEY_PATH` / `MCP_GIT_TOKEN`. |
 
 ## Fix the ops repo, then retry
@@ -48,6 +64,8 @@ editing. Say which path you mean when you report them.
 
 | Code | Meaning | What to do |
 |---|---|---|
+| `BRANCH_NOT_ALLOWED` | The ops repo is on a branch the server may not write to, or on a detached HEAD. Checked **first**, before the dirty-tree check. | Do not work around this. It exists because a deploy onto an unwatched branch succeeds and never reaches the cluster. Tell the user which branch the repo is on and which are allowed (both are in `errorMessage`), and let them check out the right one. Only suggest `MCP_ALLOWED_BRANCHES` if they say writing to that branch is intended. |
+| `NO_UPSTREAM` | The branch has no `origin/<branch>` ref, so nothing could be pushed. | The commit directive's `git push` would fail *after* the commit landed, leaving the change committed but unpublished. Have the user run `git push -u origin <branch>` in the ops repo, or switch to a tracked branch. |
 | `DIRTY_REPO` | The working tree has uncommitted tracked changes. | Almost always an earlier mutation whose commit directive was never executed. Commit it or discard it, then retry. `errorMessage` lists the paths. |
 | `BRANCH_AHEAD` | The local branch has unpushed commits, so the server refuses to pull. | `git push` to publish them, or hard-reset the branch onto its upstream to discard them. Ask before discarding. |
 
@@ -83,6 +101,7 @@ arguments.
 |---|---|---|
 | `NO_CURRENT_TAG` | `promote` found no image tag in the source environment's manifest. | Deploy to `srcEnv` first, or promote from an environment that is actually live. |
 | `NO_PREVIOUS_VERSION` | `rollback` found no prior tag in the manifest's git history. | The information does not exist. Ask which tag to return to and use `deploy`. |
+| `MULTI_LINE_CHANGE` | The commit `rollback` would revert changed lines beyond the image tag, so the write was refused. Nothing was written. | **Not a retry-with-a-flag situation.** Show the operator the commit (`git -C <opsRepoPath> show <hash>` — the hash is in the message) and let them choose: re-call with `acknowledgeMultiLineChange: true` for a tag-only revert, or `git revert` for the whole commit. Do not set the flag on your own initiative or on the strength of an earlier "yes, roll it back". |
 
 ## Runner failures
 
@@ -109,7 +128,9 @@ fastest way to find out why.
 | Variable | Default | Effect |
 |---|---|---|
 | `MCP_OPS_REPO_PATH` | _(required)_ | Absolute path to the ops-repo clone. Unset is `CONFIG_ERROR` at startup. |
-| `MCP_ENV_ALLOWLIST` | _(empty — every env accepted)_ | Comma-separated envs the server will touch. The server logs a startup warning when empty. This plugin ships `dev,staging,prod` instead, deliberately. |
+| `MCP_ALLOWED_BRANCHES` | _(inferred from `origin/HEAD`)_ | Comma-separated branches the tools may write to; overrides `branch:` in `.ops-repo-mcp.yaml`. When none resolves the check is skipped and startup warns. |
+| `MCP_ENV_ALLOWLIST` | _(none — the server refuses to start)_ | Comma-separated envs the server may touch. Required: an empty allowlist would accept every env including production, so the server exits with `CONFIG_ERROR` unless `MCP_ALLOW_ALL_ENVS=1` is set. This plugin ships `dev,staging,prod`. |
+| `MCP_ALLOW_ALL_ENVS` | _(unset)_ | `1` opts out of the allowlist entirely. If a user hits the startup `CONFIG_ERROR`, prefer helping them write an allowlist over suggesting this. |
 | `MCP_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error`. Affects stderr only. |
 | `MCP_LOCK_TIMEOUT` | `30s` | How long a call waits for the per-repo lock. |
 | `MCP_RUNNER_TIMEOUT` | `60s` | Wall-clock bound on a runner invocation. Raise it for a large ops repo where `git pull` is slow. |

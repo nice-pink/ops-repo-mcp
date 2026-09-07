@@ -1,13 +1,13 @@
 ---
 name: ops-deploy
-description: Set or promote an application's container image tag in a GitOps ops repository — deploy a specific tag to an environment, or copy the tag that is live in one environment into another. Use when the user says "deploy <app> <tag> to <env>", "promote <app> to prod", "ship this version", "bump the image tag", or asks what tag an app currently runs. Covers dry runs, the git commit directive the server returns, and the pre-flight checks that can block a change.
+description: Set an application's container image tag to a specific version in a GitOps ops repository. Use when the user names a tag to roll out — "deploy <app> <tag> to <env>", "ship v1.2.3", "bump the image tag", "set staging to this build" — or asks what tag an app currently runs. Also documents the git commit directive every tool in this plugin returns and the pre-flight checks that can block any change. For copying a tag between environments use ops-promote; for reverting use ops-rollback.
 compatibility: Requires the deploy-promote MCP server from this plugin, running on the same machine as a local clone of the ops repo.
 metadata:
   author: nice-pink
   version: "0.1.0"
 ---
 
-# Deploy and promote in the ops repo
+# Deploy a tag in the ops repo
 
 The server rewrites the image tag inside a manifest YAML in a local ops-repo clone. It
 **never commits and never pushes**. Every successful response carries a
@@ -21,14 +21,15 @@ history stays the audit trail.
 | The user wants | Tool | Required arguments |
 |---|---|---|
 | A specific tag live in an environment | `deploy` | `app`, `env`, `tag` |
-| Whatever is live in A to also be live in B | `promote` | `app`, `destEnv` (+ `srcEnv`) |
+| Whatever is live in A to also be live in B | `promote` | see the `ops-promote` skill |
 | To undo the last change to a manifest | `rollback` | see the `ops-rollback` skill |
 
-`promote` reads the current tag from `srcEnv` itself. Never resolve the tag by hand and
-call `deploy` with it — `promote` does the read under the same lock as the write, so it
-cannot pick up a tag that changed in between.
+If the user has not named a version, `deploy` is probably the wrong tool. "Ship staging to
+prod" is a `promote`; "go back to the previous version" is a `rollback`. Never read a tag
+out of one environment and hand it to `deploy` — `promote` does that read under the same
+lock as the write, so it cannot pick up a tag that changed in between.
 
-Both tools also accept:
+`deploy` also accepts:
 
 - `namespace` — overrides the server's `DS_NAMESPACE`. Only needed when the path scheme
   includes `{namespace}` and the app lives outside the default one.
@@ -77,8 +78,6 @@ only the paths in `filesToStage`; the ops repo may hold unrelated work you must 
 in. Keep `suggestedCommitMessage` unless the user asked for different wording: the
 `Deploy <app>(<env>) version: <tag>` shape is what makes the history greppable.
 
-`promote` responses use `srcEnv` / `destEnv` / `resolvedTag` in place of `env` / `tag`.
-
 On a real call, `filesToStage` gains a second entry when `DS_IMAGE_HISTORY_FILE_NAME` is
 configured and that file exists. A **dry run never lists it**, even when it is configured,
 so a dry-run preview legitimately shows one path fewer than the call it previews. Do not
@@ -90,9 +89,15 @@ with `DIRTY_REPO`. If the user declines the commit, offer `recoveryHint.discardC
 
 ## Pre-flight checks that can block you
 
-Inside the per-repo lock, before any write, the server opens the repo, refuses a dirty
-working tree, refuses a branch ahead of upstream, then fast-forwards. So:
+Inside the per-repo lock, before any write, the server checks in order: the ops repo is on
+an allowed branch, that branch has an upstream, the working tree is clean, the branch is
+not ahead of upstream — then it fast-forwards. So:
 
+- `BRANCH_NOT_ALLOWED` and `NO_UPSTREAM` mean the change could not have reached the
+  cluster from where the repo currently sits. **Never route around them** by suggesting a
+  different branch or a config override — surface which branch the repo is on and let the
+  operator move it. A deploy onto an unwatched branch is the one failure that otherwise
+  reports success.
 - `DIRTY_REPO` and `BRANCH_AHEAD` are about the **ops repo**, not the repo you are working
   in. Report the path from `opsRepoPath`.
 - A `dryRun` still pulls. It is not read-only with respect to the clone's git state.
@@ -118,8 +123,7 @@ rejects any argument outside its own set (`additionalProperties: false`), so an 
 `environment`, `image`, or `force` fails here rather than being ignored. Read
 `errorMessage` before hunting for a bad character.
 
-`env` must also pass `MCP_ENV_ALLOWLIST` if the server sets one (`ENV_NOT_ALLOWED`), and
-`promote` rejects `srcEnv == destEnv` with `SAME_ENV`.
+`env` must also pass `MCP_ENV_ALLOWLIST` if the server sets one (`ENV_NOT_ALLOWED`).
 
 A failed call is not an MCP protocol error — `isError` is never set, so check the `success`
 field on every response. Full table: [`references/errors.md`](references/errors.md).

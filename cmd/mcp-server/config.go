@@ -12,24 +12,35 @@ import (
 
 // serverConfig holds all configuration loaded from environment variables at startup.
 type serverConfig struct {
-	OpsRepoPath     string // canonical (EvalSymlinks'd) absolute path
-	EnvAllowlist    []string
-	LogLevel        slog.Level
-	LockTimeout     time.Duration
-	RunnerTimeout   time.Duration
-	GitSSHKeyPath   string
-	GitToken        string
-	GitUser         string
-	GitEmail        string
+	OpsRepoPath   string // canonical (EvalSymlinks'd) absolute path
+	EnvAllowlist  []string
+	LogLevel      slog.Level
+	LockTimeout   time.Duration
+	RunnerTimeout time.Duration
+	GitSSHKeyPath string
+	GitToken      string
+	GitUser       string
+	GitEmail      string
 
 	// DS_ defaults — validated at startup, passed through flags to the runner
-	DSNamespace             string
-	DSBase                  string
-	DSPathScheme            string
-	DSImageFileName         string
-	DSImageHistoryFileName  string
-	DSExceptionalAppsFile   string
-	DSSrcEnv                string
+	DSNamespace            string
+	DSBase                 string
+	DSPathScheme           string
+	DSImageFileName        string
+	DSImageHistoryFileName string
+	DSExceptionalAppsFile  string
+	DSSrcEnv               string
+
+	// AllEnvsAllowed records that the operator explicitly opted out of the
+	// environment allowlist via MCP_ALLOW_ALL_ENVS=1.
+	AllEnvsAllowed bool
+
+	// AllowedBranches restricts which ops-repo branch the tools may write to.
+	// Empty means "infer from origin/HEAD at call time, and skip the check if
+	// that cannot be resolved". AllowedBranchSource names where it came from,
+	// for the error message.
+	AllowedBranches     []string
+	AllowedBranchSource string
 
 	// RepoConfigFound reports whether .ops-repo-mcp.yaml was present at the ops
 	// repo root. LayoutSources records, per layout field, whether the resolved
@@ -61,7 +72,10 @@ func loadConfig() serverConfig {
 	}
 	cfg.OpsRepoPath = canonical
 
-	// MCP_ENV_ALLOWLIST — optional, comma-separated
+	// MCP_ENV_ALLOWLIST — the guardrail on which environments the tools may
+	// touch. An empty allowlist used to mean "every environment", with only a
+	// startup warning, so an out-of-the-box server could write to prod. It is
+	// now fail-closed: running unrestricted requires saying so explicitly.
 	if v := os.Getenv("MCP_ENV_ALLOWLIST"); v != "" {
 		parts := strings.Split(v, ",")
 		for _, p := range parts {
@@ -70,6 +84,12 @@ func loadConfig() serverConfig {
 				cfg.EnvAllowlist = append(cfg.EnvAllowlist, p)
 			}
 		}
+	}
+	if len(cfg.EnvAllowlist) == 0 {
+		if os.Getenv("MCP_ALLOW_ALL_ENVS") != "1" {
+			fatal(codeConfigError, "MCP_ENV_ALLOWLIST is empty. Set it to the environments this server may write to (e.g. \"dev,staging\"), or set MCP_ALLOW_ALL_ENVS=1 to accept every environment including production.")
+		}
+		cfg.AllEnvsAllowed = true
 	}
 
 	// MCP_LOG_LEVEL
@@ -162,6 +182,25 @@ func loadConfig() serverConfig {
 		} else {
 			sources["exceptionalAppsFile"] = srcFromDefault
 		}
+	}
+
+	// MCP_ALLOWED_BRANCHES — operational, env-only, wins over the repo file.
+	// Guards against writing a "prod deploy" onto a branch nothing deploys from:
+	// the mutation succeeds, the agent reports success, and the cluster never
+	// sees it.
+	if v := os.Getenv("MCP_ALLOWED_BRANCHES"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				cfg.AllowedBranches = append(cfg.AllowedBranches, p)
+			}
+		}
+		cfg.AllowedBranchSource = "MCP_ALLOWED_BRANCHES"
+	} else if rc != nil && rc.Branch != "" {
+		cfg.AllowedBranches = []string{rc.Branch}
+		cfg.AllowedBranchSource = repoConfigFileName + " branch"
+	}
+	if len(cfg.AllowedBranches) == 0 {
+		cfg.AllowedBranchSource = "origin/HEAD"
 	}
 
 	// DS_SRC_PATH — warn if set (not honoured; MCP always uses MCP_OPS_REPO_PATH)

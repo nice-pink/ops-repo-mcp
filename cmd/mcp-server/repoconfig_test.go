@@ -528,3 +528,85 @@ func TestLoadRepoConfigRejectsSymlinkOutOfRepo(t *testing.T) {
 		t.Errorf("want 'outside the ops repo', got: %v", err)
 	}
 }
+
+func TestLoadRepoConfigBranch(t *testing.T) {
+	root := writeRepoConfig(t, "version: 1\nbranch: release\nlayout:\n  base: base/apps\n")
+	rc, err := loadRepoConfig(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rc.Branch != "release" {
+		t.Errorf("branch = %q, want %q", rc.Branch, "release")
+	}
+}
+
+// `branch` is accepted; everything outside version/branch/layout is still not.
+func TestLoadRepoConfigStillRejectsOperationalKeysAlongsideBranch(t *testing.T) {
+	root := writeRepoConfig(t, "version: 1\nbranch: main\ngitToken: hunter2\n")
+	if _, err := loadRepoConfig(root); err == nil {
+		t.Fatal("gitToken must still be rejected")
+	}
+}
+
+func TestIsRunnerPhaseCode(t *testing.T) {
+	// Only these three can be returned after the runner may have written.
+	for _, c := range []string{codeRunnerFailed, codeRunnerPanic, codeRunnerTimeout} {
+		if !isRunnerPhaseCode(c) {
+			t.Errorf("%s should be a runner-phase code", c)
+		}
+	}
+	// Everything raised before the write phase must not claim a possible write.
+	for _, c := range []string{
+		codeInvalidInput, codeEnvNotAllowed, codeSameEnv, codePathEscape,
+		codeRepoNotFound, codeConfigError, codeDirtyRepo, codeBranchAhead,
+		codeBranchNotAllowed, codeNoUpstream, codePullFailed, codeNoCurrentTag,
+		codeNoPrevVersion, codeMultiLineChange, codeLockTimeout,
+	} {
+		if isRunnerPhaseCode(c) {
+			t.Errorf("%s must not be treated as a runner-phase code", c)
+		}
+	}
+}
+
+func TestErrMultiLineChangeMessage(t *testing.T) {
+	e := errMultiLineChange("app1", "prod", "v2", "v1", "abc1234", 3, "base/app1/prod/deployment.yaml")
+	if e.code != codeMultiLineChange {
+		t.Fatalf("code = %q", e.code)
+	}
+	for _, want := range []string{"app1", "prod", "v1", "abc1234", "3 line(s)"} {
+		if !strings.Contains(e.message, want) {
+			t.Errorf("message should mention %q, got: %s", want, e.message)
+		}
+	}
+	if !strings.Contains(e.hint, "acknowledgeMultiLineChange=true") {
+		t.Errorf("hint should name the opt-in flag, got: %s", e.hint)
+	}
+	if !strings.Contains(e.hint, "git revert") {
+		t.Errorf("hint should offer the whole-commit alternative, got: %s", e.hint)
+	}
+}
+
+// An unreadable current tag inflates nonTagLineChanges, so the message must say
+// so rather than implying the commit was genuinely wide.
+func TestErrMultiLineChangeEmptyCurrentTag(t *testing.T) {
+	e := errMultiLineChange("app1", "prod", "", "v1", "abc1234", 42, "m.yaml")
+	if !strings.Contains(e.message, "could not be read") {
+		t.Errorf("message should flag the unreadable current tag, got: %s", e.message)
+	}
+	if !strings.Contains(e.message, "may overstate") {
+		t.Errorf("message should warn the count is inflated, got: %s", e.message)
+	}
+}
+
+func TestErrLockHeldByLeakedRunner(t *testing.T) {
+	e := errLockHeldByLeakedRunner(2)
+	if e.code != codeLockTimeout {
+		t.Fatalf("code = %q, want %q", e.code, codeLockTimeout)
+	}
+	if !strings.Contains(e.message, "never returned") {
+		t.Errorf("message should distinguish a leak from contention, got: %s", e.message)
+	}
+	if !strings.Contains(e.hint, "restart") {
+		t.Errorf("hint should say a retry will not help, got: %s", e.hint)
+	}
+}

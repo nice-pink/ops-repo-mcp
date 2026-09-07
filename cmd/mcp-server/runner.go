@@ -25,7 +25,11 @@ func (h *handler) callRunner(parentCtx context.Context, toolName string, fn func
 
 	slog.Default().Info("lock_wait", "repo", h.cfg.OpsRepoPath, "timeout_s", h.cfg.LockTimeout.Seconds())
 	if lockErr := h.repoMu.Lock(lockCtx); lockErr != nil {
-		slog.Default().Error("lock_timeout", "repo", h.cfg.OpsRepoPath)
+		leaked := h.timedOutRunners.Load()
+		slog.Default().Error("lock_timeout", "repo", h.cfg.OpsRepoPath, "timedOutRunners", leaked)
+		if leaked > 0 {
+			return "", errLockHeldByLeakedRunner(leaked)
+		}
 		return "", errLockTimeout(lockErr)
 	}
 	// NOTE: do NOT defer repoMu.Unlock() here.
@@ -75,9 +79,11 @@ func (h *handler) callRunner(parentCtx context.Context, toolName string, fn func
 		// Goroutine is leaked and still holds the lock. Restore slog so subsequent
 		// MCP code does not write into the orphaned sink buffer.
 		slog.SetDefault(prev)
+		h.timedOutRunners.Add(1)
 		slog.Default().Warn("runner_timeout_leaked",
 			"tool", toolName,
 			"timeout_s", h.cfg.RunnerTimeout.Seconds(),
+			"timedOutRunners", h.timedOutRunners.Load(),
 		)
 		return buf.String(), errRunnerTimeout()
 	}

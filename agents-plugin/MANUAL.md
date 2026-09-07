@@ -2,8 +2,8 @@
 
 This plugin ships two things:
 
-- **`skills/ops-deploy`** and **`skills/ops-rollback`** — instructions the agent loads when
-  a task matches.
+- **`skills/ops-deploy`**, **`skills/ops-promote`** and **`skills/ops-rollback`** —
+  instructions the agent loads when a task matches, one per tool.
 - **One MCP server** — `deploy-promote`, the `mcp-server` binary from this repository, run
   over stdio. It provides the `deploy`, `promote`, and `rollback` tools.
 
@@ -45,10 +45,11 @@ than hardcoding a path, so export it before starting the client:
 export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo
 ```
 
-`MCP_ENV_ALLOWLIST` is the other one worth setting explicitly. It defaults to
-`dev,staging,prod` in this plugin, but **the server's own default is empty, which accepts
-every environment** — it is the only thing constraining which environments an agent can
-touch, so do not leave it to chance.
+`MCP_ENV_ALLOWLIST` is the other one that matters. **The server refuses to start without
+it**, because an empty allowlist would accept every environment including production. This
+plugin ships `dev,staging,prod`, so the shipped config starts cleanly; narrow it if this
+server should not reach prod. `MCP_ALLOW_ALL_ENVS=1` opts out of the allowlist entirely and
+logs a warning on every start — reach for an explicit list first.
 
 Everything else has a default, and the layout should not live here at all — see the next
 section. The full environment table is in
@@ -157,8 +158,8 @@ this repo ships for keeping it. A third route gives you the skills only.
 claude --plugin-dir "$OPS_PLUGIN"
 ```
 
-The skills become `/ops-repo:ops-deploy` and `/ops-repo:ops-rollback`; the server
-registers as `plugin:ops-repo:deploy-promote`. Run `/reload-plugins` after editing a file.
+The skills become `/ops-repo:ops-deploy`, `/ops-repo:ops-promote` and
+`/ops-repo:ops-rollback`; the server registers as `plugin:ops-repo:deploy-promote`. Run `/reload-plugins` after editing a file.
 
 ### Install it permanently
 
@@ -169,18 +170,18 @@ registers the MCP server.
 ### Skills only, without the server
 
 `~/.claude/skills/` holds one skill per directory, each with its own `SKILL.md` at the top
-level, and is never scanned for `.mcp.json`. So copy the two skill directories
+level, and is never scanned for `.mcp.json`. So copy the three skill directories
 individually — **not** the plugin directory, which would nest them a level too deep and
 load nothing:
 
 ```bash
-cp -R "$OPS_PLUGIN/skills/ops-deploy" ~/.claude/skills/ops-deploy && cp -R "$OPS_PLUGIN/skills/ops-rollback" ~/.claude/skills/ops-rollback
+for s in ops-deploy ops-promote ops-rollback; do cp -R "$OPS_PLUGIN/skills/$s" ~/.claude/skills/"$s"; done
 ```
 
 Symlink instead if you want repo edits to take effect immediately. This gives you the
 skills in every session with **no tools** — pair it with a project-level `.mcp.json` (next
 section) or the marketplace route. Remove with
-`rm -rf ~/.claude/skills/ops-deploy ~/.claude/skills/ops-rollback`.
+`rm -rf ~/.claude/skills/ops-{deploy,promote,rollback}`.
 
 ### Verify
 
@@ -188,7 +189,7 @@ section) or the marketplace route. Remove with
 claude plugin validate "$OPS_PLUGIN"
 ```
 
-Then, in a session, `/help` lists the two skills under the `ops-repo` namespace and `/mcp`
+Then, in a session, `/help` lists the three skills under the `ops-repo` namespace and `/mcp`
 shows `deploy-promote` as connected with three tools. `claude plugin validate .` at the
 repo root validates the marketplace manifest instead.
 
@@ -235,7 +236,7 @@ directory, so point it at the two pieces separately.
 ### Skills
 
 ```bash
-mkdir -p ~/.cursor/skills && ln -s "$OPS_PLUGIN/skills/ops-deploy" ~/.cursor/skills/ops-deploy && ln -s "$OPS_PLUGIN/skills/ops-rollback" ~/.cursor/skills/ops-rollback
+mkdir -p ~/.cursor/skills && for s in ops-deploy ops-promote ops-rollback; do ln -s "$OPS_PLUGIN/skills/$s" ~/.cursor/skills/"$s"; done
 ```
 
 Use `.cursor/skills/` inside a repo instead when the skills should only apply to that
@@ -276,7 +277,7 @@ searched at the repo root), and MCP servers from `~/.codex/config.toml`.
 ### Skills
 
 ```bash
-mkdir -p ~/.codex/skills && ln -s "$OPS_PLUGIN/skills/ops-deploy" ~/.codex/skills/ops-deploy && ln -s "$OPS_PLUGIN/skills/ops-rollback" ~/.codex/skills/ops-rollback
+mkdir -p ~/.codex/skills && for s in ops-deploy ops-promote ops-rollback; do ln -s "$OPS_PLUGIN/skills/$s" ~/.codex/skills/"$s"; done
 ```
 
 Invoke one explicitly with `$ops-deploy`, or let Codex match it against the skill's
@@ -307,6 +308,7 @@ Verify with `codex mcp list`.
 | Symptom | Cause |
 |---|---|
 | Skills load, no `deploy` / `promote` / `rollback` tools | The server process is not starting. Run `mcp-server --version` by hand, then check the client's stderr log — the server exits at startup on `REPO_NOT_FOUND` and `CONFIG_ERROR`. |
+| Server exits immediately, `CONFIG_ERROR: MCP_ENV_ALLOWLIST is empty` | No environment allowlist. Set `MCP_ENV_ALLOWLIST` to the environments this server may write to, or `MCP_ALLOW_ALL_ENVS=1` to accept every one including prod. |
 | Server exits immediately, `CONFIG_ERROR: MCP_OPS_REPO_PATH is not set` | The variable is unset or empty. If the config uses `${MCP_OPS_REPO_PATH}`, it was not exported in the environment the client inherited — clients do not always see your shell env. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |
 | `spawn mcp-server ENOENT` | The install directory is not on the `PATH` the client sees. Use the absolute path the installer printed. |

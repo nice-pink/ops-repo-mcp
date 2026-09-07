@@ -15,8 +15,10 @@ agents-plugin/
 ├── MANUAL.md                                # install guide: Claude Code, Cursor, Codex
 └── skills/
     ├── ops-deploy/
-    │   ├── SKILL.md                         # deploy, promote, dry runs, commit directive
+    │   ├── SKILL.md                         # deploy a named tag; the shared commit directive
     │   └── references/errors.md             # error codes, retry rules, server env
+    ├── ops-promote/
+    │   └── SKILL.md                         # copy the live tag from one env into another
     └── ops-rollback/
         └── SKILL.md                         # rollback, multi-line-change warning
 ```
@@ -120,21 +122,26 @@ carries a `commitDirective` — `filesToStage`, `suggestedCommitMessage`, `gitCo
 that the calling agent is expected to execute, plus a `recoveryHint` for backing out.
 
 An agent that ignores this leaves the ops repo dirty, which blocks the next call with
-`DIRTY_REPO`. That is the main thing `skills/ops-deploy/SKILL.md` teaches; the other is
-`rollback`'s `multiLineChange` warning, which has to reach the operator before a revert
-lands an old image next to new configuration.
+`DIRTY_REPO`. That is the main thing `skills/ops-deploy/SKILL.md` teaches, and the other
+two skills point back at it.
+
+The rest is per-tool judgement: `ops-promote` on resolving the source tag under the lock
+rather than reading it and calling `deploy`, and `ops-rollback` on the `multiLineChange`
+warning, which has to reach the operator before a revert lands an old image next to new
+configuration.
 
 ## Versioning
 
 `plugin.json` and the skills' `metadata.version` track the MCP server version they
 document (currently `0.1.0`, matching `serverVersion` in
 [`cmd/mcp-server/main.go`](../cmd/mcp-server/main.go)). When the tool surface or the
-response shape changes, update the skills and bump the version in all five places:
+response shape changes, update the skills and bump the version in all six places:
 
 ```
 agents-plugin/plugin.json
 agents-plugin/.claude-plugin/plugin.json
 agents-plugin/skills/ops-deploy/SKILL.md      # metadata.version
+agents-plugin/skills/ops-promote/SKILL.md     # metadata.version
 agents-plugin/skills/ops-rollback/SKILL.md    # metadata.version
 .claude-plugin/marketplace.json               # plugins[0].version
 ```

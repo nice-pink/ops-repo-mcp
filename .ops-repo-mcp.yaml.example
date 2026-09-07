@@ -16,6 +16,14 @@
 
 version: 1
 
+# The branch the tools may write to — normally whatever your GitOps controller
+# watches. Guards against a "prod deploy" landing on a feature branch, which
+# succeeds and reports success but never reaches the cluster.
+# MCP_ALLOWED_BRANCHES (comma-separated) overrides this. If neither is set the
+# server infers the branch from refs/remotes/origin/HEAD, and skips the check
+# entirely when the repo has no such ref.
+branch: main
+
 layout:
   # Base folder inside the ops repo. Default: empty.
   base: base/apps

@@ -16,8 +16,10 @@ That is a tag-level revert of one manifest, not `git revert`. Nothing else in th
 is undone, and no history is rewritten. Like `deploy` and `promote`, the server mutates
 the file and returns a `commitDirective` for you to execute.
 
-Optional arguments: `namespace` (overrides `DS_NAMESPACE`) and `dryRun` (resolves the
-previous tag and computes the warning below without writing).
+Optional arguments: `namespace` (overrides `DS_NAMESPACE`), `dryRun` (resolves the
+previous tag and computes the warning below without writing), and
+`acknowledgeMultiLineChange` (see below — the server refuses the write without it when the
+target commit changed more than the tag).
 
 ## Always dry-run first
 
@@ -43,14 +45,22 @@ even for a tag-only change. An empty `currentTag` alongside a suspiciously high
 `nonTagLineChanges` means "could not read the current tag", not "this commit changed a
 lot" — say so rather than reporting a large blast radius.
 
-**Surface this to the user before running the commit directive.** Reverting the tag alone
-leaves those other edits in place, so the environment ends up in a combination that has
-never run anywhere: old image, new configuration. Show the operator the commit
-(`git -C <opsRepoPath> show <lastCommit>`) and let them decide between the tag-only
-rollback and reverting the whole commit by hand.
+**The server enforces this.** A non-dry-run rollback in this state is refused with
+`MULTI_LINE_CHANGE` and nothing is written. Reverting the tag alone would leave the other
+edits in place, so the environment ends up in a combination that has never run anywhere:
+old image, new configuration.
 
-Do not commit a `multiLineChange: true` rollback on the strength of an earlier "yes, roll
-it back". The user agreed to a rollback, not to this one's blast radius.
+To proceed you must pass `acknowledgeMultiLineChange: true`. Before you do:
+
+1. Show the operator the commit: `git -C <opsRepoPath> show <lastCommit>`.
+2. Say what the tag-only revert will and will not undo.
+3. Get their agreement **to this specific rollback**.
+
+`MULTI_LINE_CHANGE` is not a flag to retry past. An earlier "yes, roll it back" is
+agreement to a rollback, not to this one's blast radius — the whole point of the refusal is
+that the operator did not know about the other changes when they said yes. If they would
+rather undo everything, `git revert <lastCommit>` is the honest answer and this tool is the
+wrong one.
 
 ## Response fields specific to rollback
 
@@ -85,6 +95,6 @@ The manifest has no prior tag in history — it was added in a single commit, or
 could not be extracted from the parent. Nothing to retry: the information does not exist.
 Ask the user which tag they want and call `deploy` with it.
 
-Every other error code, and the pre-flight checks that produce `DIRTY_REPO` /
-`BRANCH_AHEAD` / `LOCK_TIMEOUT`, are in
+Every other error code, and the pre-flight checks that produce `BRANCH_NOT_ALLOWED` /
+`NO_UPSTREAM` / `DIRTY_REPO` / `BRANCH_AHEAD` / `LOCK_TIMEOUT`, are in
 [`../ops-deploy/references/errors.md`](../ops-deploy/references/errors.md).

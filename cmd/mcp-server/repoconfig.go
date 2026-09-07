@@ -33,6 +33,7 @@ const repoConfigVersion = 1
 // ignored.
 type repoConfig struct {
 	Version int              `yaml:"version"`
+	Branch  string           `yaml:"branch"`
 	Layout  repoConfigLayout `yaml:"layout"`
 }
 
@@ -140,7 +141,7 @@ func unknownFieldHint(err error) string {
 	if err == nil || !strings.Contains(err.Error(), "not found in type") {
 		return ""
 	}
-	return " (only 'version' and 'layout' are accepted; operational settings such as envAllowlist, credentials and timeouts must stay in the client's env block, because this file lives in a repo that agents write to)"
+	return " (only 'version', 'branch' and 'layout' are accepted; operational settings such as envAllowlist, credentials and timeouts must stay in the client's env block, because this file lives in a repo that agents write to)"
 }
 
 // resolveExceptionalAppsFile turns the relative layout.exceptionalAppsFile into

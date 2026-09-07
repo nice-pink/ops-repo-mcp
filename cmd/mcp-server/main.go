@@ -45,8 +45,20 @@ func main() {
 		"runnerTimeoutS", cfg.RunnerTimeout.Seconds(),
 		"lockTimeoutS", cfg.LockTimeout.Seconds(),
 	)
-	if len(cfg.EnvAllowlist) == 0 {
-		slog.Default().Warn("no_env_allowlist", "msg", "MCP_ENV_ALLOWLIST is empty; all environment values are accepted")
+	if cfg.AllEnvsAllowed {
+		slog.Default().Warn("all_envs_allowed",
+			"msg", "MCP_ALLOW_ALL_ENVS=1 is set: every environment value is accepted, including production. Set MCP_ENV_ALLOWLIST instead to constrain this.",
+		)
+	}
+
+	slog.Default().Info("branch_guard",
+		"allowedBranches", cfg.AllowedBranches,
+		"source", cfg.AllowedBranchSource,
+	)
+	if len(cfg.AllowedBranches) == 0 {
+		slog.Default().Warn("branch_guard_inferred",
+			"msg", "no MCP_ALLOWED_BRANCHES and no branch in "+repoConfigFileName+"; the allowed branch is inferred from refs/remotes/origin/HEAD, and if the ops repo has no such ref the branch check is skipped entirely",
+		)
 	}
 
 	// Report the resolved layout and where each value came from. Config
@@ -136,7 +148,7 @@ func main() {
 
 	// Register rollback tool
 	rollbackTool := mcp.NewTool("rollback",
-		mcp.WithDescription("Roll back an application in a given environment to the image tag it had before the most recent commit that touched its manifest. The previous tag is read from git history. If the rollback target commit changed more than the image tag line, the response sets multiLineChange=true and includes a warning — the calling LLM SHOULD surface this to the user before committing. Files are mutated but not committed or pushed — the commitDirective in the response instructs the calling LLM to run git add / commit / push."),
+		mcp.WithDescription("Roll back an application in a given environment to the image tag it had before the most recent commit that touched its manifest. The previous tag is read from git history. If the rollback target commit changed more than the image tag line, a non-dry-run call is REFUSED with MULTI_LINE_CHANGE unless acknowledgeMultiLineChange=true; surface that commit to the user before acknowledging. Files are mutated but not committed or pushed — the commitDirective in the response instructs the calling LLM to run git add / commit / push."),
 		mcp.WithString("app",
 			mcp.Required(),
 			mcp.Description("Application name as it appears in the ops repo path."),
@@ -153,6 +165,9 @@ func main() {
 		),
 		mcp.WithBoolean("dryRun",
 			mcp.Description("If true, resolve the previous tag and compute the change-set warning without modifying any files."),
+		),
+		mcp.WithBoolean("acknowledgeMultiLineChange",
+			mcp.Description("Required to be true for a non-dry-run rollback when the target commit changed lines beyond the image tag; otherwise the call is refused with MULTI_LINE_CHANGE. Set it only after showing the operator that commit and getting their agreement — a tag-only revert of a wider commit leaves the old image running against new configuration."),
 		),
 	)
 	s.AddTool(rollbackTool, h.HandleRollback)

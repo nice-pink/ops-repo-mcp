@@ -174,6 +174,29 @@ Once the ops repo carries the file, a client entry needs almost nothing:
 `.mcp.json.example` has the fully-populated form for repos with no config file,
 where every layout value comes from the `env` block instead.
 
+### Branch guard
+
+The tools refuse to write unless the ops repo is on an allowed branch and that
+branch can actually be pushed. Without this, a "deploy to prod" made while the
+clone sits on a feature branch succeeds, reports success, and never reaches the
+cluster — the one failure the operator cannot see in the response.
+
+The allowed set is resolved once at startup, in this order:
+
+1. `MCP_ALLOWED_BRANCHES` — comma-separated, env-only.
+2. `branch:` in `.ops-repo-mcp.yaml` — a single branch, committed with the repo.
+3. `refs/remotes/origin/HEAD` — the repo's own default branch, which a normal
+   `git clone` sets.
+
+If none resolves (a repo built with `git init` + `git remote add` has no
+`origin/HEAD`), the check is **skipped** and the startup log says so under
+`branch_guard_inferred`. Set one of the first two to close that gap.
+
+A detached HEAD is always refused: it cannot be pushed. So is a branch with no
+`origin/<branch>` ref, with `NO_UPSTREAM` — a commit there could never be
+published, and the bare `git push` in the commit directive would fail after the
+commit had already landed.
+
 ### Layout config file
 
 Optional. `.ops-repo-mcp.yaml` at the root of the **ops repo** (not this repo);
@@ -184,6 +207,7 @@ call.
 
 ```yaml
 version: 1
+branch: main
 layout:
   base: base/apps
   namespace: ""
@@ -230,6 +254,7 @@ the point).
 | Variable | Description |
 |----------|-------------|
 | `MCP_OPS_REPO_PATH` | Absolute path to a local clone of the ops repo. Required. Unset exits with `CONFIG_ERROR`; set but missing, not a directory, or unresolvable exits with `REPO_NOT_FOUND`. |
+| `MCP_ENV_ALLOWLIST` | Environments the server may write to. Required unless `MCP_ALLOW_ALL_ENVS=1` is set: an empty allowlist means every environment, including production, so it must be opted into rather than reached by default. |
 
 ### Optional environment
 
@@ -238,7 +263,9 @@ var wins when both are set. The `MCP_*` rows are env-only.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_ENV_ALLOWLIST` | _(empty — all envs accepted)_ | Comma-separated list of envs the server will operate on. Strongly recommended. |
+| `MCP_ALLOWED_BRANCHES` | _(inferred from `origin/HEAD`)_ | Comma-separated branches the tools may write to. Wins over `branch:` in `.ops-repo-mcp.yaml`. See **Branch guard**. |
+| `MCP_ENV_ALLOWLIST` | _(none — startup fails)_ | Comma-separated list of envs the server may write to. **Required** unless `MCP_ALLOW_ALL_ENVS=1`. |
+| `MCP_ALLOW_ALL_ENVS` | _(unset)_ | Set to `1` to run with no environment allowlist, accepting every env including production. Logs a warning on every start. |
 | `MCP_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. Logs always go to stderr; stdout is reserved for MCP framing. |
 | `MCP_LOCK_TIMEOUT` | `30s` | Max wait for the per-repo lock. Returns `LOCK_TIMEOUT` on expiry. |
 | `MCP_RUNNER_TIMEOUT` | `60s` | Max wall-clock for a runner invocation. Returns `RUNNER_TIMEOUT` on expiry; the goroutine is leaked and holds the lock until it finishes. |
@@ -259,7 +286,12 @@ var wins when both are set. The `MCP_*` rows are env-only.
 
 All three tools take `app` and an environment, share the same input validation
 (`^[a-z0-9][a-z0-9-]*$` for app/env/namespace, `^[a-zA-Z0-9_.-]+$` for tag),
-the same dirty-tree / branch-ahead pre-checks, and the same per-repo lock.
+the same pre-checks, and the same per-repo lock.
+
+Inside the lock, before any write, every tool checks in this order: the ops repo
+is on an allowed branch (`BRANCH_NOT_ALLOWED`), that branch has an upstream
+(`NO_UPSTREAM`), the working tree is clean (`DIRTY_REPO`), and the branch is not
+ahead of its upstream (`BRANCH_AHEAD`) — then it fast-forwards.
 
 ### `deploy`
 
@@ -297,6 +329,7 @@ The previous tag is read from git history; no caller-supplied tag is needed.
 | `env` | yes | |
 | `namespace` | no | |
 | `dryRun` | no | Computes the previous tag and the change-set warning without mutating. |
+| `acknowledgeMultiLineChange` | no | Required for a non-dry-run rollback when `multiLineChange` would be true; without it the call is refused with `MULTI_LINE_CHANGE` and nothing is written. |
 
 Response fields specific to `rollback`:
 
@@ -305,15 +338,27 @@ Response fields specific to `rollback`:
   rolled back, and its parent (the rollback target).
 - `multiLineChange` — `true` if the last commit touched lines in the manifest
   beyond the image-tag substitution. When true, the response also includes a
-  human-readable `warning` and a `nonTagLineChanges` count. The calling LLM
-  should surface this to the operator before executing the commit directive,
-  because a tag-only revert won't restore those other changes.
+  human-readable `warning` and a `nonTagLineChanges` count.
+
+  A non-dry-run rollback in this state is **refused** with `MULTI_LINE_CHANGE`
+  unless `acknowledgeMultiLineChange: true` is passed. A tag-only revert of a
+  wider commit leaves the other edits in place, so the environment ends up
+  running an old image against new configuration — a combination that has never
+  run anywhere. Dry runs still report it without refusing, so the caller can see
+  what it would be acknowledging.
+
+  One caveat: if `currentTag` cannot be read from the manifest, every differing
+  line counts as a non-tag change, so `nonTagLineChanges` may overstate the
+  commit. The error message says so when that happens.
 
 Errors specific to `rollback`:
 
 - `NO_PREVIOUS_VERSION` — the manifest has no prior history (initial commit
   only), or the previous tag couldn't be extracted. Deploy an earlier tag
   explicitly via `deploy` instead.
+- `MULTI_LINE_CHANGE` — the commit being reverted changed more than the image
+  tag. Re-call with `acknowledgeMultiLineChange: true` after showing the
+  operator that commit, or use `git revert` to undo the whole thing.
 
 ## Response shape
 
@@ -357,7 +402,18 @@ Error:
 ```
 
 Error codes: `INVALID_INPUT`, `ENV_NOT_ALLOWED`, `SAME_ENV`, `PATH_ESCAPE`,
-`REPO_NOT_FOUND`, `CONFIG_ERROR`, `DIRTY_REPO`, `BRANCH_AHEAD`, `PULL_FAILED`,
-`NO_CURRENT_TAG`, `NO_PREVIOUS_VERSION`, `RUNNER_FAILED`, `RUNNER_PANIC`,
+`REPO_NOT_FOUND`, `CONFIG_ERROR`, `DIRTY_REPO`, `BRANCH_NOT_ALLOWED`,
+`BRANCH_AHEAD`, `NO_UPSTREAM`, `PULL_FAILED`, `NO_CURRENT_TAG`,
+`NO_PREVIOUS_VERSION`, `MULTI_LINE_CHANGE`, `RUNNER_FAILED`, `RUNNER_PANIC`,
 `RUNNER_TIMEOUT`, `LOCK_TIMEOUT`.
+
+`RUNNER_FAILED`, `RUNNER_PANIC` and `RUNNER_TIMEOUT` are the only errors raised
+after the runner may have written. Those responses carry `mayHaveWritten: true`,
+a `dirtyPaths` list of the affected files git currently reports as modified, and
+a `postFailureRecovery` object with detect / discard / complete commands. Every
+other error is raised before the write phase and leaves the repo untouched.
+
+After a `RUNNER_TIMEOUT` the leaked goroutine keeps holding the repo lock, so
+subsequent calls return `LOCK_TIMEOUT` — and that response says how many earlier
+runners never returned, because a restart is needed rather than a retry.
 
