@@ -4,6 +4,9 @@ This plugin ships two things:
 
 - **`skills/ops-deploy`**, **`skills/ops-promote`** and **`skills/ops-rollback`** —
   instructions the agent loads when a task matches, one per tool.
+- **`skills/ops-init`** — writes the `.ops-repo-mcp.yaml` an ops repo needs, deriving the
+  layout from the repo's own manifest tree. It calls no tool, so it works while the server
+  is still refusing to start.
 - **One MCP server** — `deploy-promote`, the `mcp-server` binary from this repository, run
   over stdio. It provides the `deploy`, `promote`, and `rollback` tools.
 
@@ -177,8 +180,8 @@ this repo ships for keeping it. A third route gives you the skills only.
 claude --plugin-dir "$OPS_PLUGIN"
 ```
 
-The skills become `/ops-repo:ops-deploy`, `/ops-repo:ops-promote` and
-`/ops-repo:ops-rollback`; the server registers as `plugin:ops-repo:deploy-promote`. Run `/reload-plugins` after editing a file.
+The skills become `/ops-repo:ops-init`, `/ops-repo:ops-deploy`, `/ops-repo:ops-promote`
+and `/ops-repo:ops-rollback`; the server registers as `plugin:ops-repo:deploy-promote`. Run `/reload-plugins` after editing a file.
 
 ### Install it permanently
 
@@ -194,7 +197,7 @@ individually — **not** the plugin directory, which would nest them a level too
 load nothing:
 
 ```bash
-for s in ops-deploy ops-promote ops-rollback; do cp -R "$OPS_PLUGIN/skills/$s" ~/.claude/skills/"$s"; done
+for s in ops-init ops-deploy ops-promote ops-rollback; do cp -R "$OPS_PLUGIN/skills/$s" ~/.claude/skills/"$s"; done
 ```
 
 Symlink instead if you want repo edits to take effect immediately. This gives you the
@@ -208,7 +211,7 @@ section) or the marketplace route. Remove with
 claude plugin validate "$OPS_PLUGIN"
 ```
 
-Then, in a session, `/help` lists the three skills under the `ops-repo` namespace and `/mcp`
+Then, in a session, `/help` lists the four skills under the `ops-repo` namespace and `/mcp`
 shows `deploy-promote` as connected with three tools. `claude plugin validate .` at the
 repo root validates the marketplace manifest instead.
 
@@ -255,7 +258,7 @@ directory, so point it at the two pieces separately.
 ### Skills
 
 ```bash
-mkdir -p ~/.cursor/skills && for s in ops-deploy ops-promote ops-rollback; do ln -s "$OPS_PLUGIN/skills/$s" ~/.cursor/skills/"$s"; done
+mkdir -p ~/.cursor/skills && for s in ops-init ops-deploy ops-promote ops-rollback; do ln -s "$OPS_PLUGIN/skills/$s" ~/.cursor/skills/"$s"; done
 ```
 
 Use `.cursor/skills/` inside a repo instead when the skills should only apply to that
@@ -296,7 +299,7 @@ searched at the repo root), and MCP servers from `~/.codex/config.toml`.
 ### Skills
 
 ```bash
-mkdir -p ~/.codex/skills && for s in ops-deploy ops-promote ops-rollback; do ln -s "$OPS_PLUGIN/skills/$s" ~/.codex/skills/"$s"; done
+mkdir -p ~/.codex/skills && for s in ops-init ops-deploy ops-promote ops-rollback; do ln -s "$OPS_PLUGIN/skills/$s" ~/.codex/skills/"$s"; done
 ```
 
 Invoke one explicitly with `$ops-deploy`, or let Codex match it against the skill's
@@ -329,7 +332,7 @@ Verify with `codex mcp list`.
 | Skills load, no `deploy` / `promote` / `rollback` tools | The server process is not starting. Run `mcp-server --version` by hand, then check the client's stderr log — the server exits at startup on `REPO_NOT_FOUND` and `CONFIG_ERROR`. |
 | Server exits immediately, `CONFIG_ERROR: MCP_ENV_ALLOWLIST is empty` | No environment allowlist. Set `MCP_ENV_ALLOWLIST` to the environments this server may write to, or `MCP_ALLOW_ALL_ENVS=1` to accept every one including prod. |
 | Server exits immediately, `CONFIG_ERROR: ... not inside a git work tree` | `MCP_OPS_REPO_PATH` is unset and the working directory the client launched the server in is not in a git repo. Open the client in an ops repo clone, or set the variable. |
-| Server exits immediately, `CONFIG_ERROR: ... carries no .ops-repo-mcp.yaml` | The inferred repo is not marked as an ops repo. Commit that file at its root, set `MCP_OPS_REPO_PATH`, or set `MCP_ALLOW_ANY_CWD_REPO=1`. |
+| Server exits immediately, `CONFIG_ERROR: ... carries no .ops-repo-mcp.yaml` | The inferred repo is not marked as an ops repo. Run the `ops-init` skill to write one, or set `MCP_OPS_REPO_PATH`, or set `MCP_ALLOW_ANY_CWD_REPO=1`. |
 | Server exits immediately, `CONFIG_ERROR: ... git HEAD cannot be resolved` | The client was launched in a linked worktree (`git worktree add`). The runner cannot read its refs. Use the main checkout, or set `MCP_OPS_REPO_PATH` to it. |
 | `PULL_FAILED` against a private remote that used to work | `GITHUB_TOKEN` is no longer adopted when the ops repo is inferred from the working directory. Set `MCP_GIT_TOKEN`, or set `MCP_OPS_REPO_PATH`. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |

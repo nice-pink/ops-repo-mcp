@@ -14,6 +14,8 @@ agents-plugin/
 ├── .mcp.json                                # Claude Code MCP declaration
 ├── MANUAL.md                                # install guide: Claude Code, Cursor, Codex
 └── skills/
+    ├── ops-init/
+    │   └── SKILL.md                         # write .ops-repo-mcp.yaml from the repo's own tree
     ├── ops-deploy/
     │   ├── SKILL.md                         # deploy a named tag; the shared commit directive
     │   └── references/errors.md             # error codes, retry rules, server env
@@ -153,6 +155,12 @@ rather than reading it and calling `deploy`, and `ops-rollback` on the `multiLin
 warning, which has to reach the operator before a revert lands an old image next to new
 configuration.
 
+`ops-init` is the odd one out: it writes `.ops-repo-mcp.yaml` and calls no tool. That is
+deliberate. The server exits at startup on a missing marker or an invalid layout, so the
+moment the file is needed is exactly the moment `deploy`, `promote` and `rollback` are not
+registered. The skill derives the layout by reading the repo's manifest tree and confirming
+it, rather than asking a user to recite a path scheme they may never have written down.
+
 ## Versioning
 
 `plugin.json` and the skills' `metadata.version` track the MCP server version they
@@ -165,6 +173,7 @@ the skills and bump the version in all six places:
 ```
 agents-plugin/plugin.json
 agents-plugin/.claude-plugin/plugin.json
+agents-plugin/skills/ops-init/SKILL.md        # metadata.version
 agents-plugin/skills/ops-deploy/SKILL.md      # metadata.version
 agents-plugin/skills/ops-promote/SKILL.md     # metadata.version
 agents-plugin/skills/ops-rollback/SKILL.md    # metadata.version

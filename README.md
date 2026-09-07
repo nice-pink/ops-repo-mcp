@@ -126,10 +126,13 @@ also works and lands the binary in `$(go env GOPATH)/bin`.
 ## Agent plugin
 
 `agents-plugin/` packages this server for coding agents: the MCP declaration
-plus three skills — `ops-deploy`, `ops-promote`, `ops-rollback` — that teach
-the agent the parts the tool schemas cannot, chiefly that a successful call
-leaves the ops repo dirty and the agent must execute the returned
-`commitDirective`. Skipping that blocks the next call with `DIRTY_REPO`.
+plus four skills that teach the agent the parts the tool schemas cannot.
+`ops-deploy`, `ops-promote` and `ops-rollback` cover the three tools, chiefly
+that a successful call leaves the ops repo dirty and the agent must execute the
+returned `commitDirective` — skipping that blocks the next call with
+`DIRTY_REPO`. `ops-init` writes the `.ops-repo-mcp.yaml` that an ops repo needs,
+deriving the layout from the manifest tree; it calls no tool, so it still works
+when the server is refusing to start.
 
 It is an [Agent Plugins](https://agent-plugins.org) 1.0.0 package
 (`plugin.json` + `mcp.json`) that also carries Claude Code's own format

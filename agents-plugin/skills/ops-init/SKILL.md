@@ -1,0 +1,180 @@
+---
+name: ops-init
+description: Create the .ops-repo-mcp.yaml layout config at the root of a GitOps ops repository, by reading the repo's existing manifest tree and confirming the derived layout with the user. Use when the user says "set up this ops repo", "init ops-repo-mcp", "create the ops repo config", "configure deploy/promote for this repo", "onboard a new ops repo", or when the MCP server refuses to start with "carries no .ops-repo-mcp.yaml, so nothing marks it as an ops repo" or a tool returns a path that does not exist because the layout is wrong. Also use when an existing .ops-repo-mcp.yaml needs a field added or corrected.
+compatibility: Writes a file in a local clone of the ops repo. Needs no MCP tool call, so it works even when the deploy-promote server is refusing to start.
+metadata:
+  author: nice-pink
+  version: "0.1.0"
+---
+
+# Initialise an ops repo
+
+`.ops-repo-mcp.yaml` at the root of the **ops repo** tells the server where manifests live
+inside that repository. It does two jobs:
+
+- **Layout.** Every field maps one-for-one to a `DS_*` env var, so a repo carrying this file
+  needs no `DS_*` entries in any client's config. The layout is a property of the
+  repository, so it travels with it through git instead of being re-entered on every machine
+  and by every teammate.
+- **Marker.** When `MCP_OPS_REPO_PATH` is unset the server operates on whichever repo the
+  client was launched in, and refuses unless that repo carries this file. That is what stops
+  an unrelated `.git` — a dotfiles repo at `$HOME`, say — from becoming a deploy target.
+
+This skill writes a file. It calls no tool, which is the point: the server exits at startup
+on a missing marker or a bad layout, so at the moment you most need this the `deploy`,
+`promote` and `rollback` tools are not there to help.
+
+## Derive the layout, do not interrogate the user
+
+Do not open with a list of questions. Most of this file is already visible in the repo, and
+a user who is onboarding an ops repo often cannot recite their own path scheme from memory.
+Read first, propose second, ask only about what the tree cannot tell you.
+
+### 1. Find the manifests
+
+From the repo root, locate the files that carry a container image tag:
+
+```
+rg -l --glob '!.git' '^\s*image:\s*\S+:' .
+```
+
+Fall back to `grep -rIl --exclude-dir=.git -E '^[[:space:]]*image:[[:space:]]*[^[:space:]]+:'`
+if `rg` is unavailable. Look at 5–10 hits spread across the tree, not one — a single path
+cannot distinguish `{base}/{app}/{env}` from `{base}/{namespace}/{app}/{env}`.
+
+If nothing matches, the repo may template its manifests (Helm, Kustomize overlays,
+`kustomization.yaml` patches). Say so and stop: this server rewrites an image tag in a
+concrete YAML file, and a repo whose tags only exist inside a chart's `values.yaml` needs
+that file named as `imageFileName`, not the rendered output.
+
+### 2. Read the scheme off the paths
+
+The directory holding a manifest is `pathScheme`, and the filename is `imageFileName`:
+
+```
+base/apps/poma-mcp/prod/deployment.yaml     → base: base/apps   pathScheme: "{base}/{app}/{env}"
+base/resources/default/api/staging/app.yaml → base: base/resources
+                                              namespace: default
+                                              pathScheme: "{base}/{namespace}/{app}/{env}"
+```
+
+Two things to check before you believe it:
+
+- **Which segment is the app and which is the env.** Compare paths across several apps. The
+  env segment repeats a small closed set (`dev`, `staging`, `prod`); the app segment does
+  not. Getting these the wrong way round produces a config that validates cleanly and then
+  writes to a path that does not exist.
+- **Whether every app fits.** If some apps sit at a different depth or under a different
+  name than their directory, they are exceptions — see `exceptionalAppsFile` below. Do not
+  bend `pathScheme` to accommodate one outlier; that breaks the other ninety.
+
+`namespace` is only meaningful when the scheme contains `{namespace}`. Leave both out when
+the tree has no such level, rather than setting `namespace: ""` and keeping the placeholder.
+
+### 3. Ask only what the repo cannot answer
+
+| Field | Ask about it when | Default if the user has no preference |
+|---|---|---|
+| `branch` | Always. Which branch does the GitOps controller actually watch? | Omit it, and the server infers from `origin/HEAD`. |
+| `srcEnv` | Always. `promote <app> to prod` with no source uses this. | `staging` |
+| `imageHistoryFileName` | A file alongside the manifests looks like an append-only tag log. | Omit. |
+| `exceptionalAppsFile` | Step 2 turned up apps that do not fit the scheme. | Omit. |
+
+Ask these in one message, with your derived layout shown above them so the user is
+confirming a concrete proposal rather than answering an abstract quiz. Never guess `branch`
+silently: a "prod deploy" made on a branch nothing deploys from succeeds, reports success,
+and never reaches the cluster.
+
+## The file
+
+```yaml
+version: 1
+branch: main
+layout:
+  base: base/apps
+  pathScheme: "{base}/{app}/{env}"
+  imageFileName: deployment.yaml
+  srcEnv: staging
+```
+
+Every field is optional, `version` included — a file that omits it is read as the current
+version rather than rejected over a missing line. Write it anyway: it is what makes the
+file's schema explicit to the next person, and an explicit value other than `1` is refused.
+
+Omit a field rather than writing an empty value. An empty string reads as "unset" and only
+adds noise, so a repo whose layout already matches the defaults needs nothing but the file
+itself — a file containing only comments is valid, and still counts as the marker.
+
+Quote `pathScheme`: unquoted, a value starting with `{` is a YAML flow mapping, not a
+string.
+
+Write exactly one YAML document. A second one (after a `---`) is rejected rather than
+silently ignored, because only the first would be read.
+
+### What the server refuses to start on
+
+Validation runs at startup on the value that actually wins, so a bad line here takes the
+whole server down with `CONFIG_ERROR` — the three tools included. Check the file against
+this before you write it:
+
+| Field | Rule |
+|---|---|
+| `version` | Omitted is fine. Any explicit value other than `1` is rejected. |
+| `base` | `^[A-Za-z0-9_./-]+$`, relative, no `..`. |
+| `namespace` | `^[a-z0-9][a-z0-9-]*$`. |
+| `pathScheme` | Must contain both `{app}` and `{env}`; no `..`. |
+| `imageFileName` | No `/` and no `..`. It is a filename, not a path. |
+| `imageHistoryFileName` | Same, when set. Relative to the manifest folder. |
+| `exceptionalAppsFile` | Relative to the repo root, must exist, must be a regular file, and must stay inside the repo even through a symlink. |
+| any other key | Rejected. Decoding is strict, so a typo like `pathscheme` is a startup failure, not a silently ignored line. |
+
+`srcEnv` is the exception: it is not validated at startup. A value outside
+`^[a-z0-9][a-z0-9-]*$` only logs a warning, then makes `promote` return `INVALID_INPUT`
+unless the caller passes `srcEnv` explicitly. Write a valid one anyway.
+
+### What must never go in it
+
+Only `version`, `branch` and `layout` are accepted. The environment allowlist, the ops repo
+path, the git credentials and the timeouts are all deliberately impossible to set from here,
+and attempting it fails the server at startup rather than being ignored.
+
+This is not an oversight to work around. The ops repo is a repository agents write to, so a
+pull request against it must not be able to widen what the server may touch or redirect
+where it sends a token. If the user wants to change any of those, they belong in the MCP
+client's `env` block. Say that plainly rather than looking for another way in.
+
+## After writing it
+
+1. **Show the file and the paths it implies.** Not just the YAML — expand it for one real
+   app: "for `poma-mcp` in `prod` this resolves to `base/apps/poma-mcp/prod/deployment.yaml`",
+   and confirm that file exists. A layout that validates but points nowhere is the failure
+   this step catches.
+2. **Commit it.** The file travelling with the repo is the whole point; a config that lives
+   only in one working tree helps nobody else. Stage only this file.
+3. **Restart the MCP client.** The file is read **once, at startup**. Nothing about the
+   running server changes when you write it, so a tool that failed a moment ago will keep
+   failing until the client relaunches the server. Say this explicitly — it is the most
+   common reason someone concludes the config "did not work".
+4. **Verify with a dry run.** After the restart, call `deploy` with `dryRun: true` for a
+   real app and env. The response's `commitDirective.filesToStage` is the resolved manifest
+   path; if it names the file you expected, the layout is right. A dry run still runs the
+   pre-flight `git pull`, so it is not read-only with respect to git state.
+
+Check the server's stderr after the restart if anything looks wrong. `layout_resolved` logs
+every resolved value with its source (`env` / `repo-file` / `default`), which immediately
+distinguishes "my file is being ignored" from "my file says something I did not intend". A
+value showing `env` means a `DS_*` variable in the client config is overriding the file —
+that variable wins, and the fix is to remove it from the client rather than to edit the
+file again.
+
+## Editing an existing file
+
+Read it before touching it. Preserve fields you were not asked to change, and keep the
+existing key order — this file is reviewed in pull requests, and a diff that reshuffles
+seven lines to change one is a diff nobody can review. The same startup validation applies,
+so an edit is as capable of taking the server down as an initial write.
+
+If the file is currently making the server exit, the operator's escape hatch is
+`MCP_IGNORE_REPO_CONFIG=1`, which skips **reading** the file so they can start the server
+and fix it. It does not skip the marker check, which only tests that the file exists — so a
+file that fails to parse does not also stop the repo counting as an ops repo.
