@@ -107,6 +107,11 @@ not ahead of upstream — then it fast-forwards. So:
 Full error table, including which codes are worth retrying:
 [`references/errors.md`](references/errors.md).
 
+`BRANCH_AHEAD`, `DIRTY_REPO` and `BRANCH_NOT_ALLOWED` also show up immediately after someone
+sets the ops repo up, where they mean the new `.ops-repo-mcp.yaml` was written but not
+committed, not pushed, or pushed to a branch the guard does not allow — not that the layout
+is wrong. The `ops-init` skill covers that sequence.
+
 ## Argument validation
 
 The handler re-checks every field and is the real boundary — the patterns in the tool
