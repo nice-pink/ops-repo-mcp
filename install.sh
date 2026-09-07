@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install.sh | sh
 #
 # Environment:
-#   VERSION       release tag to install (default: latest, e.g. mcp-server-v0.1.0)
+#   VERSION       release tag to install (default: latest, e.g. v0.1.0)
 #   INSTALL_DIR   target directory (default: /usr/local/bin if writable, else $HOME/.local/bin)
 #   GITHUB_TOKEN  optional, sent only to the GitHub API to lift the rate limit
 #   SKIP_CHECKSUM set to 1 to install without verifying the SHA-256 (not recommended)
@@ -13,7 +13,7 @@ set -eu
 
 REPO="nice-pink/ops-repo-mcp"
 BIN="mcp-server"
-TAG_PREFIX="mcp-server-v"
+TAG_PREFIX="v"
 MAX_PAGES=5
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -91,11 +91,10 @@ trap 'cleanup; exit 143' TERM
 version="${VERSION:-}"
 if [ -z "$version" ]; then
   info "resolving latest ${TAG_PREFIX}* release..."
-  # This repo also publishes unrelated v* releases (container images), so
-  # /releases/latest returns the wrong channel. List releases (newest first),
-  # drop drafts and prereleases, and take the first mcp-server tag. The other
-  # channel shares this listing, so page rather than trusting one page to
-  # reach far enough back.
+  # List releases (newest first), drop drafts and prereleases, and take the
+  # first ${TAG_PREFIX}* tag. /releases/latest is not used: it ignores the
+  # draft/prerelease distinction we care about here, and paging keeps this
+  # correct if the listing ever carries tags from another channel.
   page=1
   scanned=0
   while [ "$page" -le "$MAX_PAGES" ]; do

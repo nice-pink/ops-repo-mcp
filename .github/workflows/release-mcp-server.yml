@@ -2,7 +2,7 @@ name: Release MCP Server
 
 on:
   push:
-    tags: [ 'mcp-server-v*' ]
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
@@ -61,8 +61,8 @@ jobs:
           set -euo pipefail
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             case "${GITHUB_REF_NAME}" in
-              mcp-server-v*) version="${GITHUB_REF_NAME#mcp-server-v}" ;;
-              *) echo "refusing to build from non-mcp-server tag: ${GITHUB_REF_NAME}" >&2; exit 1 ;;
+              v[0-9]*) version="${GITHUB_REF_NAME#v}" ;;
+              *) echo "refusing to build from non-release tag: ${GITHUB_REF_NAME}" >&2; exit 1 ;;
             esac
           else
             version="${INPUT_VERSION:-dev}-$(git rev-parse --short HEAD)"
@@ -105,9 +105,9 @@ jobs:
     needs: build
     # Both conditions matter: workflow_dispatch accepts a tag as its ref, so
     # github.ref_type == 'tag' alone would let a manual run publish — and
-    # dispatching against an existing v* container-image tag would rewrite
-    # that release's name, notes and assets.
-    if: github.event_name == 'push' && startsWith(github.ref_name, 'mcp-server-v')
+    # dispatching against an existing release tag would rewrite that
+    # release's name, notes and assets.
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: write

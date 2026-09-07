@@ -46,7 +46,7 @@ than fails, so keep it in place.
 
 ### Prebuilt binary (recommended)
 
-Prebuilt binaries are attached to every `mcp-server-v*` release for macOS
+Prebuilt binaries are attached to every `v*` release for macOS
 (Intel + Apple Silicon) and Linux (amd64 + arm64). The install script detects
 your platform, verifies the SHA-256 checksum, and drops the binary on disk:
 
@@ -70,14 +70,14 @@ correct `command` path filled in.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `INSTALL_DIR` | `/usr/local/bin` if writable, else `~/.local/bin` | Target directory. Created if missing. |
-| `VERSION` | latest `mcp-server-v*` release | Pin a specific release tag, e.g. `mcp-server-v0.1.0`. Drafts and prereleases are never auto-selected; a prerelease can be pinned explicitly, a draft cannot be installed at all (no tag, no public download path). |
+| `VERSION` | latest `v*` release | Pin a specific release tag, e.g. `v0.1.0`. Drafts and prereleases are never auto-selected; a prerelease can be pinned explicitly, a draft cannot be installed at all (no tag, no public download path). |
 | `GITHUB_TOKEN` | _(none)_ | Sent only to the GitHub API, to lift the unauthenticated rate limit when resolving the latest release. Never sent with the asset download. |
 | `SKIP_CHECKSUM` | `0` | Set to `1` to install without verifying the SHA-256. Only useful if `checksums.txt` is missing from a release or no `sha256sum`/`shasum` is available. |
 
 Downgrading or pinning:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install.sh | VERSION=mcp-server-v0.1.0 sh
+curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install.sh | VERSION=v0.1.0 sh
 ```
 
 To uninstall, delete the binary (`rm "$(command -v mcp-server)"`). The script
@@ -126,13 +126,13 @@ also works and lands the binary in `$(go env GOPATH)/bin`.
 ## Release
 
 Binaries are built by `.github/workflows/release-mcp-server.yml`. Pushing a
-tag with the `mcp-server-v` prefix runs the tests, cross-compiles the four
+tag with the `v` prefix runs the tests, cross-compiles the four
 platform targets, and publishes a GitHub release with the tarballs,
 `checksums.txt`, and `install.sh`:
 
 ```
-git tag mcp-server-v0.1.0
-git push origin mcp-server-v0.1.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 The tag's version (minus the prefix) is compiled into the binary via
