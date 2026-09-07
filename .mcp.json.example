@@ -1,5 +1,5 @@
 {
-  "_comment": "Fully-populated form. If your ops repo carries a .ops-repo-mcp.yaml (see .ops-repo-mcp.yaml.example), drop every DS_* entry below and keep only MCP_ENV_ALLOWLIST. MCP_OPS_REPO_PATH is optional: with it unset the server operates on the git repo the client was launched in, so one entry serves every ops repo.",
+  "_comment": "Fully-populated form, for an ops repo with no .ops-repo-mcp.yaml: layout comes from the DS_* entries, and MCP_OPS_REPO_PATH must be set because a repo with no config file cannot be inferred from the working directory. If your ops repo does carry that file (see .ops-repo-mcp.yaml.example), drop every DS_* entry AND MCP_OPS_REPO_PATH, keep MCP_ENV_ALLOWLIST, and one entry then serves every ops repo you open.",
   "mcpServers": {
     "deploy-promote": {
       "command": "/absolute/path/to/mcp-server",

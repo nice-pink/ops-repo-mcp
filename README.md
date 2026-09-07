@@ -152,9 +152,9 @@ unset it operates on the repo the client is open in. Cursor and Codex install
 steps, and the `npx plugins` route, are in
 [`agents-plugin/MANUAL.md`](agents-plugin/MANUAL.md); the plugin's own layout
 and versioning rules are in
-[`agents-plugin/README.md`](agents-plugin/README.md). The plugin version tracks
-the released server version and is repeated in six files — bump them together
-when the tool surface changes.
+[`agents-plugin/README.md`](agents-plugin/README.md). The plugin version is
+repeated across seven files — bump them together when the tool surface or the
+response shape changes.
 
 ## Release
 
@@ -210,7 +210,9 @@ Once the ops repo carries the file, a client entry needs almost nothing:
 ```
 
 `.mcp.json.example` has the fully-populated form for repos with no config file,
-where every layout value comes from the `env` block instead.
+where every layout value comes from the `env` block instead. That form sets
+`MCP_OPS_REPO_PATH`, and has to: a repo with no `.ops-repo-mcp.yaml` cannot be
+inferred from the working directory.
 
 ### Which repo the server operates on
 
@@ -244,14 +246,22 @@ ambient `GITHUB_TOKEN` is exported on most developer machines for unrelated
 reasons. Set `MCP_GIT_TOKEN` to use a token here deliberately; the suppression
 is logged when a `GITHUB_TOKEN` was present and ignored.
 
-The two paths differ in what is checked, not in what is normalised. Both resolve
-a path inside a work tree to that work tree's root. A designated
-`MCP_OPS_REPO_PATH` is then accepted whether or not it is a git repo at all,
-exactly as before. An inferred path additionally has to be a work tree the
-server can operate on — HEAD must resolve, which rejects a linked worktree from
-`git worktree add`, whose refs live in the main repo's commondir where the
-runner cannot read them. Accepting one would produce a detached-HEAD error on a
-branch that is not detached, and a `DIRTY_REPO` listing every tracked file.
+Both paths resolve a path inside a usable work tree to that work tree's root. A
+designated `MCP_OPS_REPO_PATH` is then accepted whether or not it is a git repo
+at all, exactly as before; an inferred one has to be a work tree the server can
+actually operate on.
+
+"Usable" means HEAD resolves, which is the property the tools need rather than
+the one that is convenient to check. Two things fail it: a repo with no commits
+yet, and a linked worktree from `git worktree add`, whose refs live in the main
+checkout's commondir where the runner cannot read them. Accepting a worktree
+would produce a detached-HEAD error on a branch that is not detached, and a
+`DIRTY_REPO` listing every tracked file.
+
+One consequence for a designated path: if it points *inside* one of those, it
+cannot be walked to a root and is used verbatim. That is the case where
+`.ops-repo-mcp.yaml` goes unread and the branch guard quietly falls back to
+`origin/HEAD`, so startup logs `ops_repo_not_walkable` saying which it was.
 
 The resolution is logged on every start: `server_start` carries `opsRepo` and
 `opsRepoSource` (`MCP_OPS_REPO_PATH` or `cwd`), and the `cwd` case also logs an
@@ -294,7 +304,9 @@ commit had already landed.
 
 ### Layout config file
 
-Optional. `.ops-repo-mcp.yaml` at the root of the **ops repo** (not this repo);
+Optional when `MCP_OPS_REPO_PATH` is set, required when it is not — see **Which
+repo the server operates on**. `.ops-repo-mcp.yaml` at the root of the
+**ops repo** (not this repo);
 `.ops-repo-mcp.yaml.example` is a documented template to copy. Read once, at
 startup — commit a change and restart the client for it to take effect. The
 `exceptionalAppsFile` it points at is the exception: that is re-read on every
@@ -359,7 +371,8 @@ var wins when both are set. The `MCP_*` rows are env-only.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MCP_OPS_REPO_PATH` | _(the working directory, walked up to its git root)_ | Absolute path to a local clone of the ops repo. Set but missing, not a directory, or unresolvable exits with `REPO_NOT_FOUND`; unset with a working directory outside any git work tree exits with `CONFIG_ERROR`. See **Which repo the server operates on**. |
+| `MCP_OPS_REPO_PATH` | _(the working directory, walked up to its git root)_ | Absolute path to a local clone of the ops repo. Set but missing, not a directory, or unresolvable exits with `REPO_NOT_FOUND`. Unset, the working directory must be inside a git work tree, that repo's HEAD must resolve, and it must carry `.ops-repo-mcp.yaml`; any of the three failing exits with `CONFIG_ERROR`. See **Which repo the server operates on**. |
+| `MCP_ALLOW_ANY_CWD_REPO` | _(unset)_ | Set to `1` to let an inferred ops repo skip the `.ops-repo-mcp.yaml` marker, accepting any git repo the client is opened in. Logs an error-level acknowledgement on every start where it actually waived the marker. No effect when `MCP_OPS_REPO_PATH` is set, and it does not waive the git or HEAD requirements. |
 | `MCP_ALLOWED_BRANCHES` | _(inferred from `origin/HEAD`)_ | Comma-separated branches the tools may write to. Wins over `branch:` in `.ops-repo-mcp.yaml`. See **Branch guard**. |
 | `MCP_ENV_ALLOWLIST` | _(none — startup fails)_ | Comma-separated list of envs the server may write to. **Required** unless `MCP_ALLOW_ALL_ENVS=1`. |
 | `MCP_ALLOW_ALL_ENVS` | _(unset)_ | Set to `1` to run with no environment allowlist, accepting every env including production. Logs a warning on every start. |
@@ -377,8 +390,7 @@ var wins when both are set. The `MCP_*` rows are env-only.
 | `DS_IMAGE_HISTORY_FILE_NAME` | _(empty)_ | If set, the server appends the new tag to this file (relative to the manifest folder) on successful deploy/promote/rollback. |
 | `DS_EXCEPTIONAL_APPS_FILE` | _(empty)_ | Path to a YAML file describing apps whose image name / path deviates from the default scheme. Must exist on disk if set. |
 | `DS_SRC_ENV` | `staging` | Default source env for `promote` when the caller doesn't pass one. Should match `^[a-z0-9][a-z0-9-]*$`; a value that doesn't logs a startup warning and makes `promote` return `INVALID_INPUT` unless `srcEnv` is passed explicitly. |
-| `MCP_ALLOW_ANY_CWD_REPO` | _(unset)_ | Set to `1` to let an inferred ops repo skip the `.ops-repo-mcp.yaml` marker, accepting any git repo the client is opened in. Logs a warning on every start. No effect when `MCP_OPS_REPO_PATH` is set. |
-| `MCP_IGNORE_REPO_CONFIG` | _(unset)_ | Set to `1` to ignore `.ops-repo-mcp.yaml` entirely and take layout from the env vars and defaults only. |
+| `MCP_IGNORE_REPO_CONFIG` | _(unset)_ | Set to `1` to skip **reading** `.ops-repo-mcp.yaml` and take layout from the env vars and defaults only. It does not skip the marker check, which only tests that the file exists. |
 
 ## Tools
 
@@ -387,9 +399,10 @@ All three tools take `app` and an environment, share the same input validation
 the same pre-checks, and the same per-repo lock.
 
 Inside the lock, before any write, every tool checks in this order: the ops repo
-is on an allowed branch (`BRANCH_NOT_ALLOWED`), that branch has an upstream
-(`NO_UPSTREAM`), the working tree is clean (`DIRTY_REPO`), and the branch is not
-ahead of its upstream (`BRANCH_AHEAD`) — then it fast-forwards.
+is on an allowed branch (`BRANCH_NOT_ALLOWED`), the working tree is clean
+(`DIRTY_REPO`), and the branch is not ahead of its upstream (`BRANCH_AHEAD`) —
+then it fast-forwards. `NO_UPSTREAM` comes out of that third check, so a dirty
+tree on a branch with no upstream reports `DIRTY_REPO` first.
 
 ### `deploy`
 

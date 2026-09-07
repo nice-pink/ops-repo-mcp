@@ -90,16 +90,18 @@ with `DIRTY_REPO`. If the user declines the commit, offer `recoveryHint.discardC
 ## Pre-flight checks that can block you
 
 Inside the per-repo lock, before any write, the server checks in order: the ops repo is on
-an allowed branch, that branch has an upstream, the working tree is clean, the branch is
-not ahead of upstream — then it fast-forwards. So:
+an allowed branch, the working tree is clean, the branch is not ahead of upstream — then it
+fast-forwards. `NO_UPSTREAM` surfaces from that last check, so a dirty tree on a branch with
+no upstream reports `DIRTY_REPO` rather than `NO_UPSTREAM`. So:
 
 - `BRANCH_NOT_ALLOWED` and `NO_UPSTREAM` mean the change could not have reached the
   cluster from where the repo currently sits. **Never route around them** by suggesting a
   different branch or a config override — surface which branch the repo is on and let the
   operator move it. A deploy onto an unwatched branch is the one failure that otherwise
   reports success.
-- `DIRTY_REPO` and `BRANCH_AHEAD` are about the **ops repo**, not the repo you are working
-  in. Report the path from `opsRepoPath`.
+- `DIRTY_REPO` and `BRANCH_AHEAD` are about the **ops repo** at `opsRepoPath`, which is the
+  repo the client is open in when `MCP_OPS_REPO_PATH` is unset and a separate clone when it
+  is set. Read the path off the response rather than assuming, and report it.
 - A `dryRun` still pulls. It is not read-only with respect to the clone's git state.
 - Calls serialize on one lock per repo. A second call waits up to `MCP_LOCK_TIMEOUT`, then
   returns `LOCK_TIMEOUT` — that is contention, not failure. Retry once.

@@ -48,21 +48,51 @@ func main() {
 		"runnerTimeoutS", cfg.RunnerTimeout.Seconds(),
 		"lockTimeoutS", cfg.LockTimeout.Seconds(),
 	)
+	// The two opt-out acknowledgements below are logged at Error so they survive
+	// MCP_LOG_LEVEL=error. A client config that turns the server quiet must not
+	// also remove the one line saying that any repo the client opens is now a
+	// deploy target — that is the signal the opt-out's whole design depends on
+	// the operator seeing.
+	if cfg.AnyCwdRepoAllowed {
+		slog.Default().Error("any_cwd_repo_allowed",
+			"opsRepo", cfg.OpsRepoPath,
+			"msg", allowAnyCwdRepoEnv+"=1 waived the missing "+repoConfigFileName+" marker: this git repo is a deploy target because the client was opened in it. Its origin also determines where the pre-flight fetch sends MCP_GIT_TOKEN.",
+		)
+	}
+	if cfg.GitHubTokenSuppressed {
+		slog.Default().Error("github_token_suppressed",
+			"msg", "GITHUB_TOKEN is set but was not adopted: the ops repo is inferred from the working directory, and the pre-flight fetch would send the token to whatever remote that repo has. Set MCP_GIT_TOKEN to use a token here deliberately.",
+		)
+	}
+	if cfg.OpsRepoPathNotWalkable != "" {
+		slog.Default().Warn("ops_repo_not_walkable",
+			"opsRepo", cfg.OpsRepoPath,
+			"msg", opsRepoPathEnv+" is inside a git repo but "+cfg.OpsRepoPathNotWalkable+"; using the path as given. If it is a subdirectory, "+repoConfigFileName+" will not be read and the branch guard falls back to origin/HEAD.",
+		)
+	}
+	if cfg.InvalidSrcEnv {
+		slog.Default().Warn("invalid_src_env",
+			"value", cfg.DSSrcEnv,
+			"source", cfg.SrcEnvSource,
+			"msg", "does not match ^[a-z0-9][a-z0-9-]*$; promote will return INVALID_INPUT unless srcEnv is passed explicitly",
+		)
+	}
+	if cfg.SrcPathIgnored {
+		slog.Default().Warn("ds_src_path_ignored",
+			"msg", "DS_SRC_PATH is set but ignored by mcp-server; the ops repo is "+opsRepoPathEnv+", or the working directory when that is unset",
+		)
+	}
+	if cfg.OpsRepoPathNormalisedFrom != "" {
+		slog.Default().Info("ops_repo_normalised",
+			"given", cfg.OpsRepoPathNormalisedFrom,
+			"repoRoot", cfg.OpsRepoPath,
+			"msg", opsRepoPathEnv+" points inside a git work tree; using its root, which is what every manifest path is relative to",
+		)
+	}
 	if cfg.OpsRepoPathSource == opsRepoPathCwd {
 		slog.Default().Warn("ops_repo_from_cwd",
 			"opsRepo", cfg.OpsRepoPath,
 			"msg", "MCP_OPS_REPO_PATH is not set, so the working directory the client launched this server in is being used as the ops repo. Set MCP_OPS_REPO_PATH to pin one clone.",
-		)
-	}
-	if cfg.GitHubTokenSuppressed {
-		slog.Default().Warn("github_token_suppressed",
-			"msg", "GITHUB_TOKEN is set but was not adopted: the ops repo is inferred from the working directory, and the pre-flight fetch would send the token to whatever remote that repo has. Set MCP_GIT_TOKEN to use a token here deliberately.",
-		)
-	}
-	if cfg.AnyCwdRepoAllowed {
-		slog.Default().Warn("any_cwd_repo_allowed",
-			"opsRepo", cfg.OpsRepoPath,
-			"msg", allowAnyCwdRepoEnv+"=1 is set: any git repo the client is opened in becomes a deploy target, with no "+repoConfigFileName+" marking it as an ops repo. Its origin also determines where the pre-flight fetch sends MCP_GIT_TOKEN.",
 		)
 	}
 	if cfg.AllEnvsAllowed {

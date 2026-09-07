@@ -8,6 +8,10 @@
       "env": {
         "MCP_OPS_REPO_PATH": "${MCP_OPS_REPO_PATH:-}",
         "MCP_ENV_ALLOWLIST": "${MCP_ENV_ALLOWLIST:-dev,staging,prod}",
+        "MCP_ALLOW_ALL_ENVS": "${MCP_ALLOW_ALL_ENVS:-}",
+        "MCP_ALLOWED_BRANCHES": "${MCP_ALLOWED_BRANCHES:-}",
+        "MCP_ALLOW_ANY_CWD_REPO": "${MCP_ALLOW_ANY_CWD_REPO:-}",
+        "MCP_IGNORE_REPO_CONFIG": "${MCP_IGNORE_REPO_CONFIG:-}",
         "MCP_LOG_LEVEL": "${MCP_LOG_LEVEL:-info}",
         "MCP_LOCK_TIMEOUT": "${MCP_LOCK_TIMEOUT:-30s}",
         "MCP_RUNNER_TIMEOUT": "${MCP_RUNNER_TIMEOUT:-60s}",
@@ -22,7 +26,8 @@
         "DS_PATH_SCHEME": "${DS_PATH_SCHEME:-}",
         "DS_IMAGE_FILE_NAME": "${DS_IMAGE_FILE_NAME:-}",
         "DS_IMAGE_HISTORY_FILE_NAME": "${DS_IMAGE_HISTORY_FILE_NAME:-}",
-        "DS_SRC_ENV": "${DS_SRC_ENV:-}"
+        "DS_SRC_ENV": "${DS_SRC_ENV:-}",
+        "DS_EXCEPTIONAL_APPS_FILE": "${DS_EXCEPTIONAL_APPS_FILE:-}"
       }
     }
   }

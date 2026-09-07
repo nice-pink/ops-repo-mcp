@@ -86,8 +86,9 @@ the pre-flight fetch authenticates against:
 - It must carry a **`.ops-repo-mcp.yaml` at its root**, which doubles as the ops-repo
   marker. `MCP_ALLOW_ANY_CWD_REPO=1` waives that and accepts any git repo, with a warning
   on every start.
-- HEAD must resolve, so a linked worktree from `git worktree add` is refused: its refs live
-  in the main repo's commondir, which the runner cannot read.
+- HEAD must resolve. That refuses a repo with no commits yet, and a linked worktree from
+  `git worktree add`, whose refs live in the main checkout's commondir where the runner
+  cannot read them.
 - `GITHUB_TOKEN` is not adopted as a fallback for `MCP_GIT_TOKEN` here. The token is
   attached to the pre-flight fetch unscoped by host, and an inferred repo's `origin` is
   chosen by which directory the client opened. Set `MCP_GIT_TOKEN` to use one deliberately.
@@ -168,7 +169,7 @@ document (currently `0.1.0`). That is a released server version, i.e. a `v<N>` r
 tag minus its `v` — not the `serverVersion` default in
 [`cmd/mcp-server/main.go`](../cmd/mcp-server/main.go), which is `dev` and only labels
 unreleased local builds. When the tool surface or the response shape changes, update
-the skills and bump the version in all six places:
+the skills and bump the version in all seven places:
 
 ```
 agents-plugin/plugin.json

@@ -27,6 +27,12 @@ This skill writes a file. It calls no tool, which is the point: the server exits
 on a missing marker or a bad layout, so at the moment you most need this the `deploy`,
 `promote` and `rollback` tools are not there to help.
 
+The marker is not the only thing an inferred repo has to satisfy. Its HEAD must resolve too,
+which a repo with no commits yet does not — likely here, since a brand-new ops repo is often
+a bare `git init`. Committing the file you are about to write fixes both at once. A linked
+worktree from `git worktree add` fails the same check for a different reason, and cannot be
+fixed by committing: its refs live in the main checkout, where the runner cannot read them.
+
 ## Derive the layout, do not interrogate the user
 
 Do not open with a list of questions. Most of this file is already visible in the repo, and

@@ -199,8 +199,9 @@ case ":${PATH}:" in
 esac
 
 info ""
-info "MCP client config (e.g. .mcp.json). MCP_OPS_REPO_PATH is optional: unset,"
-info "the server operates on the git repo the client is launched in. Add it to pin one."
+info "MCP client config (e.g. .mcp.json). MCP_OPS_REPO_PATH is optional: unset, the"
+info "server operates on the git repo the client is launched in, which must carry a"
+info ".ops-repo-mcp.yaml at its root. Add MCP_OPS_REPO_PATH to pin one clone instead."
 cat >&2 <<EOF
 {
   "mcpServers": {

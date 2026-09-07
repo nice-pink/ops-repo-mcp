@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // resolveHelperEnv puts the re-executed test binary into helper mode, where it
@@ -17,19 +19,31 @@ import (
 // are only observable from outside.
 const resolveHelperEnv = "OPS_TEST_RESOLVE_HELPER"
 
+// configHelperEnv runs the whole of loadConfig instead, so the decisions it
+// makes downstream of the resolution — chiefly whether an ambient GITHUB_TOKEN
+// is adopted — are covered by a test rather than by reading the code.
+const configHelperEnv = "OPS_TEST_CONFIG_HELPER"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(resolveHelperEnv) == "1" {
-		path, source := resolveOpsRepoPath()
-		fmt.Printf("%s\t%s\n", path, source)
+		r := resolveOpsRepoPath()
+		fmt.Printf("%s\t%s\t%s\n", r.Path, r.Source, r.NormalisedFrom)
+		os.Exit(0)
+	}
+	if os.Getenv(configHelperEnv) == "1" {
+		cfg := loadConfig()
+		fmt.Printf("source=%s gitToken=%q suppressed=%t markerWaived=%t notWalkable=%t\n",
+			cfg.OpsRepoPathSource, cfg.GitToken, cfg.GitHubTokenSuppressed,
+			cfg.AnyCwdRepoAllowed, cfg.OpsRepoPathNotWalkable != "")
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
 
 type resolveResult struct {
-	path, source string
-	exitCode     int
-	stderr       string
+	path, source, normalisedFrom string
+	exitCode                     int
+	stderr                       string
 }
 
 // runResolve re-executes the test binary in helper mode with cwd set to dir and
@@ -40,7 +54,9 @@ func runResolve(t *testing.T, dir string, env ...string) resolveResult {
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
-	cmd := exec.Command(self)
+	// -test.run guards against recursion: if TestMain ever stops intercepting the
+	// helper env var, the child runs no tests instead of re-forking the suite.
+	cmd := exec.Command(self, "-test.run=^$")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		resolveHelperEnv+"=1",
@@ -62,11 +78,11 @@ func runResolve(t *testing.T, dir string, env ...string) resolveResult {
 	if runErr != nil {
 		t.Fatalf("helper: %v (stderr: %s)", runErr, res.stderr)
 	}
-	fields := strings.SplitN(strings.TrimRight(stdout.String(), "\n"), "\t", 2)
-	if len(fields) != 2 {
-		t.Fatalf("helper stdout %q is not path\\tsource (stderr: %s)", stdout.String(), res.stderr)
+	fields := strings.SplitN(strings.TrimRight(stdout.String(), "\n"), "\t", 3)
+	if len(fields) != 3 {
+		t.Fatalf("helper stdout %q is not path\\tsource\\tnormalisedFrom (stderr: %s)", stdout.String(), res.stderr)
 	}
-	res.path, res.source = fields[0], fields[1]
+	res.path, res.source, res.normalisedFrom = fields[0], fields[1], fields[2]
 	return res
 }
 
@@ -133,7 +149,11 @@ func initRepoAt(t *testing.T, root string, markOps bool) {
 	if err := wt.AddGlob("."); err != nil {
 		t.Fatalf("AddGlob: %v", err)
 	}
-	if _, err := wt.Commit("init", &gogit.CommitOptions{AllowEmptyCommits: true}); err != nil {
+	// An explicit author: go-git otherwise falls back to the machine's git
+	// identity and returns ErrMissingAuthor where there is none, which is every
+	// CI runner.
+	sig := &object.Signature{Name: "ops-repo-mcp test", Email: "test@example.invalid", When: time.Now()}
+	if _, err := wt.Commit("init", &gogit.CommitOptions{Author: sig, Committer: sig}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 }
@@ -241,7 +261,7 @@ func TestGitWorkTreeRootRejectsLinkedWorktree(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	linked := filepath.Join(filepath.Dir(main), "linked")
+	linked := filepath.Join(t.TempDir(), "linked")
 	out, err := exec.Command("git", "-C", main, "worktree", "add", "-q", "-b", "feature", linked).CombinedOutput()
 	if err != nil {
 		t.Skipf("git worktree add: %v (%s)", err, out)
@@ -347,5 +367,163 @@ func TestOpsRepoSourceConstants(t *testing.T) {
 	}
 	if allowAnyCwdRepoEnv != "MCP_ALLOW_ANY_CWD_REPO" {
 		t.Errorf("allowAnyCwdRepoEnv = %q", allowAnyCwdRepoEnv)
+	}
+}
+
+// A designated path pointing at a subdirectory is reported as normalised, so
+// main can say which path was given and which one is being used. A path used
+// verbatim reports nothing.
+func TestResolveReportsNormalisation(t *testing.T) {
+	repo := tempRepo(t, true)
+	sub := mkdirIn(t, repo, "base", "apps")
+
+	res := runResolve(t, t.TempDir(), opsRepoPathEnv+"="+sub)
+	res.wantOK(t, repo, opsRepoPathEnv)
+	if res.normalisedFrom != sub {
+		t.Errorf("normalisedFrom = %q, want %q", res.normalisedFrom, sub)
+	}
+
+	res = runResolve(t, t.TempDir(), opsRepoPathEnv+"="+repo)
+	res.wantOK(t, repo, opsRepoPathEnv)
+	if res.normalisedFrom != "" {
+		t.Errorf("normalisedFrom = %q, want empty for a path used as given", res.normalisedFrom)
+	}
+}
+
+// A freshly `git init`ed repo has an unborn HEAD. It reaches the same check as a
+// linked worktree, so the message has to account for both — a new ops repo that
+// has not been committed to yet is a far more likely arrival than a worktree.
+func TestGitWorkTreeRootRejectsUnbornHead(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	if _, err := gogit.PlainInit(root, false); err != nil {
+		t.Fatalf("PlainInit: %v", err)
+	}
+
+	_, err = gitWorkTreeRoot(root)
+	if err == nil {
+		t.Fatalf("accepted a repo with no commits")
+	}
+	for _, want := range []string{"no commits yet", "worktree"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q: %v", want, err)
+		}
+	}
+}
+
+// runLoadConfig re-executes the test binary in loadConfig-helper mode.
+func runLoadConfig(t *testing.T, dir string, env ...string) (out string, exitCode int, stderr string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	cmd := exec.Command(self, "-test.run=^$")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		configHelperEnv+"=1",
+		opsRepoPathEnv+"=",
+		allowAnyCwdRepoEnv+"=",
+		"MCP_GIT_TOKEN=",
+		"GITHUB_TOKEN=",
+		"DS_SRC_PATH=",
+		"MCP_ENV_ALLOWLIST=dev,prod",
+	)
+	cmd.Env = append(cmd.Env, env...)
+
+	var so, se strings.Builder
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	runErr := cmd.Run()
+	if ee, ok := runErr.(*exec.ExitError); ok {
+		return "", ee.ExitCode(), se.String()
+	}
+	if runErr != nil {
+		t.Fatalf("helper: %v (stderr: %s)", runErr, se.String())
+	}
+	return strings.TrimRight(so.String(), "\n"), 0, se.String()
+}
+
+// The security control this change turns on. An ambient GITHUB_TOKEN is exported
+// on most developer machines for unrelated reasons; the pre-flight fetch sends
+// the token to whatever origin the resolved repo has, unscoped by host. So it is
+// adopted only for a repo the operator designated.
+func TestGitHubTokenOnlyAdoptedForDesignatedRepo(t *testing.T) {
+	repo := tempRepo(t, true)
+
+	t.Run("inferred repo does not adopt it", func(t *testing.T) {
+		out, code, stderr := runLoadConfig(t, repo, "GITHUB_TOKEN=ambient-secret")
+		if code != 0 {
+			t.Fatalf("exit %d (stderr: %s)", code, stderr)
+		}
+		if !strings.Contains(out, `gitToken=""`) {
+			t.Errorf("GITHUB_TOKEN leaked to an inferred repo: %s", out)
+		}
+		if !strings.Contains(out, "suppressed=true") {
+			t.Errorf("suppression not recorded, so nothing warns: %s", out)
+		}
+	})
+
+	t.Run("designated repo does adopt it", func(t *testing.T) {
+		out, code, stderr := runLoadConfig(t, t.TempDir(),
+			opsRepoPathEnv+"="+repo, "GITHUB_TOKEN=ambient-secret")
+		if code != 0 {
+			t.Fatalf("exit %d (stderr: %s)", code, stderr)
+		}
+		if !strings.Contains(out, `gitToken="ambient-secret"`) {
+			t.Errorf("designated repo should still use GITHUB_TOKEN: %s", out)
+		}
+		if !strings.Contains(out, "suppressed=false") {
+			t.Errorf("nothing was suppressed here: %s", out)
+		}
+	})
+
+	t.Run("MCP_GIT_TOKEN applies on either path", func(t *testing.T) {
+		out, code, _ := runLoadConfig(t, repo, "MCP_GIT_TOKEN=deliberate")
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		if !strings.Contains(out, `gitToken="deliberate"`) {
+			t.Errorf("MCP_GIT_TOKEN is a deliberate statement and must be honoured: %s", out)
+		}
+		if !strings.Contains(out, "suppressed=false") {
+			t.Errorf("nothing to suppress when MCP_GIT_TOKEN is set: %s", out)
+		}
+	})
+
+	t.Run("no GITHUB_TOKEN means nothing to report", func(t *testing.T) {
+		out, code, _ := runLoadConfig(t, repo)
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		if !strings.Contains(out, "suppressed=false") {
+			t.Errorf("suppressed must be false when no token was present: %s", out)
+		}
+	})
+}
+
+// The acknowledgement must describe what actually happened. Setting the flag
+// defensively in a shared client config, in a repo that does carry the marker,
+// must not produce a warning asserting the marker is missing.
+func TestMarkerWaivedOnlyWhenMarkerAbsent(t *testing.T) {
+	marked := tempRepo(t, true)
+	unmarked := tempRepo(t, false)
+
+	out, code, stderr := runLoadConfig(t, marked, allowAnyCwdRepoEnv+"=1")
+	if code != 0 {
+		t.Fatalf("exit %d (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(out, "markerWaived=false") {
+		t.Errorf("flag set but marker present: nothing was waived, so nothing should say it was: %s", out)
+	}
+
+	out, code, stderr = runLoadConfig(t, unmarked, allowAnyCwdRepoEnv+"=1")
+	if code != 0 {
+		t.Fatalf("exit %d (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(out, "markerWaived=true") {
+		t.Errorf("marker absent and waived by the flag: %s", out)
 	}
 }

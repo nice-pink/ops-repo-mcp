@@ -37,9 +37,24 @@ type serverConfig struct {
 	DSExceptionalAppsFile  string
 	DSSrcEnv               string
 
+	// InvalidSrcEnv / SrcEnvSource / SrcPathIgnored are startup notices that main
+	// emits once the configured handler exists.
+	InvalidSrcEnv  bool
+	SrcEnvSource   string
+	SrcPathIgnored bool
+
 	// AllEnvsAllowed records that the operator explicitly opted out of the
 	// environment allowlist via MCP_ALLOW_ALL_ENVS=1.
 	AllEnvsAllowed bool
+
+	// OpsRepoPathNormalisedFrom is the path MCP_OPS_REPO_PATH literally named,
+	// when that path sat inside a work tree and was resolved up to its root.
+	// Empty when the value was used as given.
+	OpsRepoPathNormalisedFrom string
+
+	// OpsRepoPathNotWalkable is why a designated MCP_OPS_REPO_PATH inside a git
+	// repo could not be walked to that repo's root. Empty otherwise.
+	OpsRepoPathNotWalkable string
 
 	// GitHubTokenSuppressed records that a GITHUB_TOKEN was present but not
 	// adopted, because the ops repo was inferred rather than designated.
@@ -77,7 +92,12 @@ func loadConfig() serverConfig {
 
 	// MCP_OPS_REPO_PATH — optional; falls back to the working directory the
 	// client launched this process in. See resolveOpsRepoPath.
-	cfg.OpsRepoPath, cfg.OpsRepoPathSource = resolveOpsRepoPath()
+	opsRepo := resolveOpsRepoPath()
+	cfg.OpsRepoPath = opsRepo.Path
+	cfg.OpsRepoPathSource = opsRepo.Source
+	cfg.OpsRepoPathNormalisedFrom = opsRepo.NormalisedFrom
+	cfg.OpsRepoPathNotWalkable = opsRepo.NotWalkable
+	cfg.AnyCwdRepoAllowed = opsRepo.MarkerWaived
 
 	// MCP_ENV_ALLOWLIST — the guardrail on which environments the tools may
 	// touch. An empty allowlist used to mean "every environment", with only a
@@ -167,13 +187,11 @@ func loadConfig() serverConfig {
 	// rather than refuse to start: an odd-but-set value used to break only
 	// promote-without-srcEnv, and turning that into a startup exit would take
 	// deploy and rollback down with it.
-	if !reNamespaceVal.MatchString(cfg.DSSrcEnv) {
-		slog.Default().Warn("invalid_src_env",
-			"value", cfg.DSSrcEnv,
-			"source", sources["srcEnv"],
-			"msg", "does not match ^[a-z0-9][a-z0-9-]*$; promote will return INVALID_INPUT unless srcEnv is passed explicitly",
-		)
-	}
+	// Reported by main, not here: loadConfig runs before the configured log
+	// handler exists, so anything logged from it ignores MCP_LOG_LEVEL and comes
+	// out in a different format from every other line.
+	cfg.InvalidSrcEnv = !reNamespaceVal.MatchString(cfg.DSSrcEnv)
+	cfg.SrcEnvSource = sources["srcEnv"]
 
 	// DS_EXCEPTIONAL_APPS_FILE — must exist on disk if set. The env var may point
 	// anywhere the operator likes; the repo-file form is relative to the repo root
@@ -224,15 +242,37 @@ func loadConfig() serverConfig {
 
 	// DS_SRC_PATH — warn if set (not honoured; the ops repo is the resolved
 	// MCP_OPS_REPO_PATH / cwd, never a runner flag)
-	if os.Getenv("DS_SRC_PATH") != "" {
-		slog.Default().Warn("ds_src_path_ignored", "msg", "DS_SRC_PATH is set but ignored by mcp-server; the ops repo is MCP_OPS_REPO_PATH, or the working directory when that is unset")
-	}
+	cfg.SrcPathIgnored = os.Getenv("DS_SRC_PATH") != ""
 
-	cfg.AnyCwdRepoAllowed = cfg.OpsRepoPathSource == opsRepoPathCwd && os.Getenv(allowAnyCwdRepoEnv) == "1"
 	cfg.RepoConfigFound = rc != nil
 	cfg.LayoutSources = sources
 
 	return cfg
+}
+
+// opsRepoResolution is everything loadConfig learned while locating the ops
+// repo. The extra fields exist so main can report the decision after the
+// configured log handler is built — see resolveOpsRepoPath.
+type opsRepoResolution struct {
+	Path   string
+	Source string
+
+	// NormalisedFrom is the path MCP_OPS_REPO_PATH literally named, when it sat
+	// inside a work tree and was resolved up to that tree's root. Empty when the
+	// value was used as given.
+	NormalisedFrom string
+
+	// NotWalkable is why a designated MCP_OPS_REPO_PATH could not be walked to a
+	// work tree root, when that is why it was left as given. Empty otherwise.
+	// A path that is simply not in a repo at all is the ordinary case and is not
+	// reported here.
+	NotWalkable string
+
+	// MarkerWaived records that the ops-repo marker was actually absent and
+	// MCP_ALLOW_ANY_CWD_REPO=1 is what let startup continue. It is false when the
+	// flag is set but the marker was there anyway, so the acknowledgement never
+	// asserts something untrue about the repo.
+	MarkerWaived bool
 }
 
 // opsRepoPathEnv / opsRepoPathCwd name the two ways the ops repo is located.
@@ -267,24 +307,35 @@ const (
 // repo at $HOME makes $HOME the ops repo for every client launched below it.
 //
 // It exits the process on failure, like the rest of loadConfig.
-func resolveOpsRepoPath() (path, source string) {
+func resolveOpsRepoPath() opsRepoResolution {
 	if raw := os.Getenv(opsRepoPathEnv); raw != "" {
 		canonical, err := canonicalDir(raw)
 		if err != nil {
 			fatal(codeRepoNotFound, fmt.Sprintf("%s %q: %v", opsRepoPathEnv, raw, err))
 		}
+		res := opsRepoResolution{Source: opsRepoPathEnv}
 		// Normalise only when the walk succeeds. A designated path that is not a
 		// usable work tree keeps its literal value: refusing it here would break
 		// setups that work today, and the tools report the real reason per call.
-		if root, err := gitWorkTreeRoot(canonical); err == nil && root != canonical {
-			slog.Default().Info("ops_repo_normalised",
-				"given", canonical,
-				"repoRoot", root,
-				"msg", opsRepoPathEnv+" points inside a git work tree; using its root, which is what every manifest path is relative to",
-			)
+		//
+		// The normalisation is reported by main once the configured log handler
+		// exists. Logging it here would go through slog's default handler, which
+		// ignores MCP_LOG_LEVEL and does not match the format of every other line.
+		root, walkErr := gitWorkTreeRoot(canonical)
+		switch {
+		case walkErr == nil && root != canonical:
+			res.NormalisedFrom = canonical
 			canonical = root
+		case walkErr != nil && insideSomeGitRepo(canonical):
+			// In a repo, but not one that can be walked — an unborn HEAD or a
+			// linked worktree. Left as given, and worth saying so: otherwise the
+			// layout file goes unread, the branch guard silently falls back to
+			// origin/HEAD, and the first failure is a PULL_FAILED that names none
+			// of that.
+			res.NotWalkable = walkErr.Error()
 		}
-		return canonical, opsRepoPathEnv
+		res.Path = canonical
+		return res
 	}
 
 	wd, err := os.Getwd()
@@ -299,14 +350,28 @@ func resolveOpsRepoPath() (path, source string) {
 	if err != nil {
 		fatal(codeConfigError, fmt.Sprintf("%s is not set, so the working directory %q would be used as the ops repo, but %v. Open the client in an ops repo clone, or set %s.", opsRepoPathEnv, canonical, err, opsRepoPathEnv))
 	}
-	if err := opsRepoMarkerOK(root); err != nil {
-		fatal(codeConfigError, fmt.Sprintf("%s is not set, so the working directory resolved to the git repo %q, but %v. Commit a %s at that repo's root to mark it as an ops repo, or set %s to designate the repo explicitly, or set %s=1 to deploy into any git repo the client is opened in.", opsRepoPathEnv, root, err, repoConfigFileName, opsRepoPathEnv, allowAnyCwdRepoEnv))
+	markerErr := opsRepoMarkerPresent(root)
+	if markerErr != nil && os.Getenv(allowAnyCwdRepoEnv) != "1" {
+		fatal(codeConfigError, fmt.Sprintf("%s is not set, so the working directory resolved to the git repo %q, but %v. Commit a %s at that repo's root to mark it as an ops repo, or set %s to designate the repo explicitly, or set %s=1 to deploy into any git repo the client is opened in.", opsRepoPathEnv, root, markerErr, repoConfigFileName, opsRepoPathEnv, allowAnyCwdRepoEnv))
 	}
-	return root, opsRepoPathCwd
+	return opsRepoResolution{
+		Path:         root,
+		Source:       opsRepoPathCwd,
+		MarkerWaived: markerErr != nil,
+	}
 }
 
-// opsRepoMarkerOK reports whether root declares itself an ops repo, by carrying
-// a .ops-repo-mcp.yaml at its root.
+// insideSomeGitRepo reports whether dir sits in a git repository at all,
+// ignoring whether that repository is one the server can operate on. It
+// separates "you pointed at a plain directory", which is allowed and ordinary,
+// from "you pointed into a repo we cannot use", which is worth a warning.
+func insideSomeGitRepo(dir string) bool {
+	_, err := gogit.PlainOpenWithOptions(dir, &gogit.PlainOpenOptions{DetectDotGit: true})
+	return err == nil
+}
+
+// opsRepoMarkerPresent reports whether root declares itself an ops repo, by
+// carrying a readable .ops-repo-mcp.yaml at its root.
 //
 // This is only ever applied to an inferred path. A git repo is not evidence of
 // an ops repo, and everything downstream trusts whatever is resolved here — the
@@ -314,24 +379,20 @@ func resolveOpsRepoPath() (path, source string) {
 // repo" but never "inside the right repo". The marker is the cheapest positive
 // signal available that a human intended this repository to be deployed from.
 //
-// Presence is the whole test: the file's contents are parsed later by
-// loadRepoConfig, and MCP_IGNORE_REPO_CONFIG=1 suppresses that parse without
-// suppressing this check, because the file is being read here as a marker
-// rather than as configuration.
-//
-// MCP_ALLOW_ANY_CWD_REPO=1 opts out, mirroring MCP_ALLOW_ALL_ENVS. It is a real
-// choice with a real cost — see the credential note in main.go's startup
-// warning — so it has to be made explicitly rather than reached by default.
-func opsRepoMarkerOK(root string) error {
-	if os.Getenv(allowAnyCwdRepoEnv) == "1" {
-		return nil
-	}
-	fi, err := os.Lstat(filepath.Join(root, repoConfigFileName))
+// The test deliberately matches what loadRepoConfig will accept: os.Stat
+// follows symlinks and IsRegular rejects a directory, a device, or a dangling
+// link. Anything looser and the operator gets a YAML or symlink error for what
+// is really a missing marker — and with MCP_IGNORE_REPO_CONFIG=1, where
+// loadRepoConfig never looks at the file, nothing would check it at all.
+// Contents are not read here: parsing is loadRepoConfig's job, and a file that
+// fails to parse should not also stop the repo counting as an ops repo.
+func opsRepoMarkerPresent(root string) error {
+	fi, err := os.Stat(filepath.Join(root, repoConfigFileName))
 	if err != nil {
-		return fmt.Errorf("it carries no %s, so nothing marks it as an ops repo", repoConfigFileName)
+		return fmt.Errorf("it carries no readable %s, so nothing marks it as an ops repo", repoConfigFileName)
 	}
-	if fi.IsDir() {
-		return fmt.Errorf("its %s is a directory, not a file", repoConfigFileName)
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("its %s is not a regular file", repoConfigFileName)
 	}
 	return nil
 }
@@ -342,11 +403,13 @@ func opsRepoMarkerOK(root string) error {
 // root.
 //
 // HEAD must resolve, which is the property the tools actually need rather than
-// the one that is convenient to check. A linked worktree from `git worktree add`
-// opens cleanly here but keeps its refs in the main repo's commondir, and the
-// runner opens the repo with git.PlainOpen, which does not read it: every call
-// would then report a detached HEAD on a branch that is not detached, and a
-// DIRTY_REPO listing every tracked file. Failing at startup names the reason.
+// the one that is convenient to check. Two things fail it. A repo with no
+// commits has an unborn HEAD and nothing for rollback to read. A linked worktree
+// from `git worktree add` opens cleanly here but keeps its refs in the main
+// repo's commondir, and the runner opens the repo with git.PlainOpen, which does
+// not read it: every call would report a detached HEAD on a branch that is not
+// detached, and a DIRTY_REPO listing every tracked file. Failing at startup
+// names the reason instead.
 func gitWorkTreeRoot(dir string) (string, error) {
 	repo, err := gogit.PlainOpenWithOptions(dir, &gogit.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
@@ -357,7 +420,7 @@ func gitWorkTreeRoot(dir string) (string, error) {
 		return "", fmt.Errorf("its git repository has no usable work tree: %w", err)
 	}
 	if _, err := repo.Head(); err != nil {
-		return "", fmt.Errorf("its git HEAD cannot be resolved (%w) — a linked worktree from `git worktree add` looks like this, and the runner cannot read its refs", err)
+		return "", fmt.Errorf("its git HEAD cannot be resolved (%w) — either the repo has no commits yet, or it is a linked worktree from `git worktree add`, whose refs live in the main checkout where the runner cannot read them", err)
 	}
 	root, err := canonicalDir(wt.Filesystem.Root())
 	if err != nil {

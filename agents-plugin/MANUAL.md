@@ -1,6 +1,6 @@
 # Install guide
 
-This plugin ships two things:
+This plugin ships three things:
 
 - **`skills/ops-deploy`**, **`skills/ops-promote`** and **`skills/ops-rollback`** —
   instructions the agent loads when a task matches, one per tool.
@@ -54,8 +54,10 @@ An inferred repo must carry a **`.ops-repo-mcp.yaml` at its root** — the layou
 as the marker that this repository is meant to be deployed from. Without it, any ancestor
 `.git` would become a deploy target, and the resolved repo is what supplies the branch
 guard, the layout, and the remote the pre-flight fetch authenticates against.
-`MCP_ALLOW_ANY_CWD_REPO=1` waives the marker, with a warning on every start. A linked
-worktree from `git worktree add` is refused either way: the runner cannot read its refs.
+`MCP_ALLOW_ANY_CWD_REPO=1` waives the marker, and says so at error level on every start
+where it actually waived one. It waives nothing else: the directory must still be in a git
+work tree whose HEAD resolves, which rules out a repo with no commits yet and a linked
+worktree from `git worktree add`.
 
 `GITHUB_TOKEN` is not used as a fallback for `MCP_GIT_TOKEN` on the inferred path, because
 the token reaches whatever remote that repo has. Set `MCP_GIT_TOKEN` to use one there.
@@ -244,8 +246,9 @@ claude plugin marketplace add "$PWD" && claude plugin install ops-repo@nice-pink
 ```
 
 Installing the plugin does **not** install the `mcp-server` binary. Each teammate still
-needs it on `PATH` and still needs `MCP_OPS_REPO_PATH` exported — the plugin ships the
-skills and the server declaration, not the server.
+needs it on `PATH` — the plugin ships the skills and the server declaration, not the
+server. They do not need `MCP_OPS_REPO_PATH`: unset, each session operates on the ops repo
+that session is open in, provided it carries a `.ops-repo-mcp.yaml`.
 
 ---
 
@@ -333,7 +336,7 @@ Verify with `codex mcp list`.
 | Server exits immediately, `CONFIG_ERROR: MCP_ENV_ALLOWLIST is empty` | No environment allowlist. Set `MCP_ENV_ALLOWLIST` to the environments this server may write to, or `MCP_ALLOW_ALL_ENVS=1` to accept every one including prod. |
 | Server exits immediately, `CONFIG_ERROR: ... not inside a git work tree` | `MCP_OPS_REPO_PATH` is unset and the working directory the client launched the server in is not in a git repo. Open the client in an ops repo clone, or set the variable. |
 | Server exits immediately, `CONFIG_ERROR: ... carries no .ops-repo-mcp.yaml` | The inferred repo is not marked as an ops repo. Run the `ops-init` skill to write one, or set `MCP_OPS_REPO_PATH`, or set `MCP_ALLOW_ANY_CWD_REPO=1`. |
-| Server exits immediately, `CONFIG_ERROR: ... git HEAD cannot be resolved` | The client was launched in a linked worktree (`git worktree add`). The runner cannot read its refs. Use the main checkout, or set `MCP_OPS_REPO_PATH` to it. |
+| Server exits immediately, `CONFIG_ERROR: ... git HEAD cannot be resolved` | Either the repo has no commits yet — make one — or the client was launched in a linked worktree (`git worktree add`), whose refs the runner cannot read; use the main checkout instead. |
 | `PULL_FAILED` against a private remote that used to work | `GITHUB_TOKEN` is no longer adopted when the ops repo is inferred from the working directory. Set `MCP_GIT_TOKEN`, or set `MCP_OPS_REPO_PATH`. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |
 | Tools work but write to the wrong repo | `MCP_OPS_REPO_PATH` is unset and the client launched the server somewhere other than the repo you expected. Check `opsRepo` / `opsRepoSource` in the `server_start` stderr line, then set the variable to pin it. |

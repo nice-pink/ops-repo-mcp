@@ -59,8 +59,9 @@ a moving target. Re-check with `detectCommand` before acting.
 
 ## Fix the ops repo, then retry
 
-These are about the ops-repo clone at `opsRepoPath`, not the repository the user is
-editing. Say which path you mean when you report them.
+These are about the ops-repo clone at `opsRepoPath`. That is the repo the client is open in
+when `MCP_OPS_REPO_PATH` is unset, and a separate clone when it is set — so read the path off
+the response rather than assuming, and say which one you mean when you report them.
 
 | Code | Meaning | What to do |
 |---|---|---|
