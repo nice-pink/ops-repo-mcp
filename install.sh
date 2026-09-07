@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install.sh | sh
 #
 # Environment:
-#   VERSION       release tag to install (default: latest, e.g. v0.1.0)
+#   VERSION       release tag to install (default: latest, e.g. v2)
 #   INSTALL_DIR   target directory (default: /usr/local/bin if writable, else $HOME/.local/bin)
 #   GITHUB_TOKEN  optional, sent only to the GitHub API to lift the rate limit
 #   SKIP_CHECKSUM set to 1 to install without verifying the SHA-256 (not recommended)
