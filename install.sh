@@ -199,7 +199,8 @@ case ":${PATH}:" in
 esac
 
 info ""
-info "MCP client config (e.g. .mcp.json):"
+info "MCP client config (e.g. .mcp.json). MCP_OPS_REPO_PATH is optional: unset,"
+info "the server operates on the git repo the client is launched in. Add it to pin one."
 cat >&2 <<EOF
 {
   "mcpServers": {
@@ -207,7 +208,6 @@ cat >&2 <<EOF
       "command": "${target}",
       "args": [],
       "env": {
-        "MCP_OPS_REPO_PATH": "/absolute/path/to/your/ops-repo",
         "MCP_ENV_ALLOWLIST": "dev,staging,prod",
         "DS_BASE": "base/apps",
         "DS_PATH_SCHEME": "{base}/{app}/{env}",

@@ -43,10 +43,28 @@ func main() {
 	// Startup logs
 	slog.Default().Info("server_start",
 		"opsRepo", cfg.OpsRepoPath,
+		"opsRepoSource", cfg.OpsRepoPathSource,
 		"envAllowlist", cfg.EnvAllowlist,
 		"runnerTimeoutS", cfg.RunnerTimeout.Seconds(),
 		"lockTimeoutS", cfg.LockTimeout.Seconds(),
 	)
+	if cfg.OpsRepoPathSource == opsRepoPathCwd {
+		slog.Default().Warn("ops_repo_from_cwd",
+			"opsRepo", cfg.OpsRepoPath,
+			"msg", "MCP_OPS_REPO_PATH is not set, so the working directory the client launched this server in is being used as the ops repo. Set MCP_OPS_REPO_PATH to pin one clone.",
+		)
+	}
+	if cfg.GitHubTokenSuppressed {
+		slog.Default().Warn("github_token_suppressed",
+			"msg", "GITHUB_TOKEN is set but was not adopted: the ops repo is inferred from the working directory, and the pre-flight fetch would send the token to whatever remote that repo has. Set MCP_GIT_TOKEN to use a token here deliberately.",
+		)
+	}
+	if cfg.AnyCwdRepoAllowed {
+		slog.Default().Warn("any_cwd_repo_allowed",
+			"opsRepo", cfg.OpsRepoPath,
+			"msg", allowAnyCwdRepoEnv+"=1 is set: any git repo the client is opened in becomes a deploy target, with no "+repoConfigFileName+" marking it as an ops repo. Its origin also determines where the pre-flight fetch sends MCP_GIT_TOKEN.",
+		)
+	}
 	if cfg.AllEnvsAllowed {
 		slog.Default().Warn("all_envs_allowed",
 			"msg", "MCP_ALLOW_ALL_ENVS=1 is set: every environment value is accepted, including production. Set MCP_ENV_ALLOWLIST instead to constrain this.",

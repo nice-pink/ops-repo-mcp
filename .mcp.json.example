@@ -1,5 +1,5 @@
 {
-  "_comment": "Fully-populated form. If your ops repo carries a .ops-repo-mcp.yaml (see .ops-repo-mcp.yaml.example), drop every DS_* entry below and keep only MCP_OPS_REPO_PATH plus MCP_ENV_ALLOWLIST.",
+  "_comment": "Fully-populated form. If your ops repo carries a .ops-repo-mcp.yaml (see .ops-repo-mcp.yaml.example), drop every DS_* entry below and keep only MCP_ENV_ALLOWLIST. MCP_OPS_REPO_PATH is optional: with it unset the server operates on the git repo the client was launched in, so one entry serves every ops repo.",
   "mcpServers": {
     "deploy-promote": {
       "command": "/absolute/path/to/mcp-server",

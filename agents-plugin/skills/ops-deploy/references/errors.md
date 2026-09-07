@@ -55,7 +55,7 @@ a moving target. Re-check with `detectCommand` before acting.
 | Code | Meaning | What to do |
 |---|---|---|
 | `LOCK_TIMEOUT` | This call waited longer than `MCP_LOCK_TIMEOUT` for the per-repo lock and gave up. The timeout bounds *your* wait, not the holder's runtime. | **Read the message.** Ordinary contention ("could not acquire repo lock within MCP_LOCK_TIMEOUT") is worth one retry. If it says *"N earlier runner call(s) exceeded MCP_RUNNER_TIMEOUT and never returned"*, retrying is pointless — the lock is held by a goroutine that cannot be cancelled. Tell the user to restart the server, and to check `git status` on the ops repo first because that runner may still be writing. |
-| `PULL_FAILED` | The pre-flight failed before any write. Either the `git fetch` / fast-forward against the remote failed, or the repo could not be opened or inspected at all. | Check the `errorMessage` prefix. `open:`, `status:`, or `ahead-check:` means `MCP_OPS_REPO_PATH` is not a usable git clone — fix the path, do not retry. An unprefixed message is the remote: retry once for a transient network error, otherwise check `MCP_GIT_SSH_KEY_PATH` / `MCP_GIT_TOKEN`. |
+| `PULL_FAILED` | The pre-flight failed before any write. Either the `git fetch` / fast-forward against the remote failed, or the repo could not be opened or inspected at all. | Check the `errorMessage` prefix. `open:`, `status:`, or `ahead-check:` means the ops repo is not a usable git clone — fix `MCP_OPS_REPO_PATH`, or the directory the client was launched in, and do not retry. An unprefixed message is the remote: retry once for a transient network error, otherwise check `MCP_GIT_SSH_KEY_PATH` / `MCP_GIT_TOKEN`. |
 
 ## Fix the ops repo, then retry
 
@@ -91,8 +91,8 @@ arguments.
 
 | Code | Meaning | What to do |
 |---|---|---|
-| `CONFIG_ERROR` | Invalid or absent configuration at startup: `MCP_OPS_REPO_PATH` **not set**, a `pathScheme` missing `{app}` or `{env}`, a `..` in a path template, an image filename containing `/`, a missing exceptional-apps file, or an invalid `.ops-repo-mcp.yaml` (unknown key, unsupported `version`, a layout value failing the same patterns as the env var). | Fix the client's `env` block or that file. The server exits at startup on this, so you normally see a server that never connects rather than a tool result — the stderr line names the offending key. |
-| `REPO_NOT_FOUND` | `MCP_OPS_REPO_PATH` **is** set but unusable — the path does not exist, is not a directory, or its symlinks cannot be resolved. | Point it at a real local clone. Also a startup-time exit. An unset variable is `CONFIG_ERROR`, not this. |
+| `CONFIG_ERROR` | Invalid or absent configuration at startup: `MCP_ENV_ALLOWLIST` **not set**, `MCP_OPS_REPO_PATH` unset with a working directory that is **outside any git work tree**, is a **linked worktree**, or resolves to a git repo carrying **no `.ops-repo-mcp.yaml`** to mark it as an ops repo, a `pathScheme` missing `{app}` or `{env}`, a `..` in a path template, an image filename containing `/`, a missing exceptional-apps file, or an invalid `.ops-repo-mcp.yaml` (unknown key, unsupported `version`, a layout value failing the same patterns as the env var). | Fix the client's `env` block or that file. The server exits at startup on this, so you normally see a server that never connects rather than a tool result — the stderr line names the offending key. |
+| `REPO_NOT_FOUND` | `MCP_OPS_REPO_PATH` **is** set but unusable — the path does not exist, is not a directory, or its symlinks cannot be resolved. | Point it at a real local clone. Also a startup-time exit. Unset is not an error: the working directory is used instead, and its own failures are `CONFIG_ERROR`, not this. |
 | `PATH_ESCAPE` | A path the call would read or write resolved outside the ops repo root. Checked for the manifest, the history file, and `promote`'s **source** manifest, both in the pre-flight and again after the pull. | Almost always a per-app/per-env `path` in the exceptional-apps file pointing out of the tree. Surfaces per call, not at startup. Report it as a repo-configuration problem and do not retry — the server refused to read or write outside the repo, which is the correct outcome. |
 
 ## Nothing to retry
@@ -127,7 +127,8 @@ fastest way to find out why.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MCP_OPS_REPO_PATH` | _(required)_ | Absolute path to the ops-repo clone. Unset is `CONFIG_ERROR` at startup. |
+| `MCP_OPS_REPO_PATH` | _(the working directory, walked up to its git root)_ | Absolute path to the ops-repo clone. Unset means the server operates on whichever repo the client was launched in; that repo must be a git work tree with a resolvable HEAD and must carry `.ops-repo-mcp.yaml`, or startup exits with `CONFIG_ERROR`. |
+| `MCP_ALLOW_ANY_CWD_REPO` | _(unset)_ | `1` waives the `.ops-repo-mcp.yaml` marker on an inferred repo. No effect when `MCP_OPS_REPO_PATH` is set. |
 | `MCP_ALLOWED_BRANCHES` | _(inferred from `origin/HEAD`)_ | Comma-separated branches the tools may write to; overrides `branch:` in `.ops-repo-mcp.yaml`. When none resolves the check is skipped and startup warns. |
 | `MCP_ENV_ALLOWLIST` | _(none — the server refuses to start)_ | Comma-separated envs the server may touch. Required: an empty allowlist would accept every env including production, so the server exits with `CONFIG_ERROR` unless `MCP_ALLOW_ALL_ENVS=1` is set. This plugin ships `dev,staging,prod`. |
 | `MCP_ALLOW_ALL_ENVS` | _(unset)_ | `1` opts out of the allowlist entirely. If a user hits the startup `CONFIG_ERROR`, prefer helping them write an allowlist over suggesting this. |
@@ -135,7 +136,7 @@ fastest way to find out why.
 | `MCP_LOCK_TIMEOUT` | `30s` | How long a call waits for the per-repo lock. |
 | `MCP_RUNNER_TIMEOUT` | `60s` | Wall-clock bound on a runner invocation. Raise it for a large ops repo where `git pull` is slow. |
 | `MCP_GIT_SSH_KEY_PATH` | _(none)_ | SSH key for the pre-flight fetch. |
-| `MCP_GIT_TOKEN` | falls back to `GITHUB_TOKEN` | HTTPS token for the same. |
+| `MCP_GIT_TOKEN` | falls back to `GITHUB_TOKEN`, but only when `MCP_OPS_REPO_PATH` is set | HTTPS token for the pre-flight fetch. The fallback is withheld from an inferred repo: the token is not scoped by host, and an inferred repo's `origin` is decided by which directory the client opened. |
 | `MCP_GIT_USER` | `mcp-server` | Author name for commit objects the runner creates. |
 | `MCP_GIT_EMAIL` | _(empty)_ | Author email for the same. |
 | `DS_BASE` | _(empty)_ | Base folder inside the ops repo, e.g. `base/apps`. |

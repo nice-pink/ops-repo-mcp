@@ -36,14 +36,33 @@ mcp-server --version
 
 ## Configure the environment
 
-The server reads its configuration from the `env` block of the client entry, and exits at
-startup if `MCP_OPS_REPO_PATH` is unset (`CONFIG_ERROR`) or set but unusable
-(`REPO_NOT_FOUND`). The declarations in this plugin reference `${MCP_OPS_REPO_PATH}` rather
-than hardcoding a path, so export it before starting the client:
+The server reads its configuration from the `env` block of the client entry.
+
+`MCP_OPS_REPO_PATH` says which clone to operate on, and is **optional**. Unset, the server
+uses the working directory the client launched it in, walked up to the root of its git work
+tree — so one installed plugin serves every ops repo you work in. Set the variable only to
+pin the server to one clone regardless of where the client is opened:
 
 ```bash
-export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo
+export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo   # only to pin one clone
 ```
+
+An inferred repo must carry a **`.ops-repo-mcp.yaml` at its root** — the layout file doubles
+as the marker that this repository is meant to be deployed from. Without it, any ancestor
+`.git` would become a deploy target, and the resolved repo is what supplies the branch
+guard, the layout, and the remote the pre-flight fetch authenticates against.
+`MCP_ALLOW_ANY_CWD_REPO=1` waives the marker, with a warning on every start. A linked
+worktree from `git worktree add` is refused either way: the runner cannot read its refs.
+
+`GITHUB_TOKEN` is not used as a fallback for `MCP_GIT_TOKEN` on the inferred path, because
+the token reaches whatever remote that repo has. Set `MCP_GIT_TOKEN` to use one there.
+
+The declarations in this plugin pass the path through as `${MCP_OPS_REPO_PATH:-}`, so in a
+client that expands it an unset variable stays unset rather than becoming a literal. A path
+that *is* set but does not exist is `REPO_NOT_FOUND` at startup. `server_start` logs the
+resolved `opsRepo` and its `opsRepoSource` (`MCP_OPS_REPO_PATH` or `cwd`) — read that line
+before assuming the server picked the wrong repo, because whether a client passes its
+session directory through is the client's behaviour, not this server's.
 
 `MCP_ENV_ALLOWLIST` is the other one that matters. **The server refuses to start without
 it**, because an empty allowlist would accept every environment including production. This
@@ -253,7 +272,6 @@ Add to `~/.cursor/mcp.json`:
       "command": "mcp-server",
       "args": [],
       "env": {
-        "MCP_OPS_REPO_PATH": "/absolute/path/to/your/ops-repo",
         "MCP_ENV_ALLOWLIST": "dev,staging,prod"
       }
     }
@@ -264,8 +282,9 @@ Add to `~/.cursor/mcp.json`:
 Cursor infers the transport from the presence of `command`, so there is no `type` field.
 Check Settings → MCP; the server should list `deploy`, `promote`, and `rollback`.
 
-Add `DS_*` entries here only to override the ops repo's `.ops-repo-mcp.yaml`; with that
-file committed, the two variables above are all this entry needs.
+Add `MCP_OPS_REPO_PATH` only to pin one clone, and `DS_*` entries only to override the ops
+repo's `.ops-repo-mcp.yaml`; with that file committed, the one variable above is all this
+entry needs.
 
 ---
 
@@ -293,11 +312,11 @@ command = "mcp-server"
 args = []
 
 [mcp_servers.deploy-promote.env]
-MCP_OPS_REPO_PATH = "/absolute/path/to/your/ops-repo"
 MCP_ENV_ALLOWLIST = "dev,staging,prod"
 ```
 
-Same as Cursor: add `DS_*` keys only to override the ops repo's `.ops-repo-mcp.yaml`.
+Same as Cursor: add `MCP_OPS_REPO_PATH` only to pin one clone, and `DS_*` keys only to
+override the ops repo's `.ops-repo-mcp.yaml`.
 
 Verify with `codex mcp list`.
 
@@ -309,8 +328,12 @@ Verify with `codex mcp list`.
 |---|---|
 | Skills load, no `deploy` / `promote` / `rollback` tools | The server process is not starting. Run `mcp-server --version` by hand, then check the client's stderr log — the server exits at startup on `REPO_NOT_FOUND` and `CONFIG_ERROR`. |
 | Server exits immediately, `CONFIG_ERROR: MCP_ENV_ALLOWLIST is empty` | No environment allowlist. Set `MCP_ENV_ALLOWLIST` to the environments this server may write to, or `MCP_ALLOW_ALL_ENVS=1` to accept every one including prod. |
-| Server exits immediately, `CONFIG_ERROR: MCP_OPS_REPO_PATH is not set` | The variable is unset or empty. If the config uses `${MCP_OPS_REPO_PATH}`, it was not exported in the environment the client inherited — clients do not always see your shell env. |
+| Server exits immediately, `CONFIG_ERROR: ... not inside a git work tree` | `MCP_OPS_REPO_PATH` is unset and the working directory the client launched the server in is not in a git repo. Open the client in an ops repo clone, or set the variable. |
+| Server exits immediately, `CONFIG_ERROR: ... carries no .ops-repo-mcp.yaml` | The inferred repo is not marked as an ops repo. Commit that file at its root, set `MCP_OPS_REPO_PATH`, or set `MCP_ALLOW_ANY_CWD_REPO=1`. |
+| Server exits immediately, `CONFIG_ERROR: ... git HEAD cannot be resolved` | The client was launched in a linked worktree (`git worktree add`). The runner cannot read its refs. Use the main checkout, or set `MCP_OPS_REPO_PATH` to it. |
+| `PULL_FAILED` against a private remote that used to work | `GITHUB_TOKEN` is no longer adopted when the ops repo is inferred from the working directory. Set `MCP_GIT_TOKEN`, or set `MCP_OPS_REPO_PATH`. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |
+| Tools work but write to the wrong repo | `MCP_OPS_REPO_PATH` is unset and the client launched the server somewhere other than the repo you expected. Check `opsRepo` / `opsRepoSource` in the `server_start` stderr line, then set the variable to pin it. |
 | `spawn mcp-server ENOENT` | The install directory is not on the `PATH` the client sees. Use the absolute path the installer printed. |
 | Nothing loads in Claude Code | Wrong directory passed to `--plugin-dir`. It must be `agents-plugin`, the directory holding `skills/`. |
 | Installed via `npx plugins add`, skills work, no tools | The CLI did not pick up `.mcp.json`. Declare the server manually per the routes above. |

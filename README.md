@@ -123,6 +123,36 @@ make build
 Produces `bin/mcp-server`. `go install github.com/nice-pink/ops-repo-mcp/cmd/mcp-server@latest`
 also works and lands the binary in `$(go env GOPATH)/bin`.
 
+## Agent plugin
+
+`agents-plugin/` packages this server for coding agents: the MCP declaration
+plus three skills — `ops-deploy`, `ops-promote`, `ops-rollback` — that teach
+the agent the parts the tool schemas cannot, chiefly that a successful call
+leaves the ops repo dirty and the agent must execute the returned
+`commitDirective`. Skipping that blocks the next call with `DIRTY_REPO`.
+
+It is an [Agent Plugins](https://agent-plugins.org) 1.0.0 package
+(`plugin.json` + `mcp.json`) that also carries Claude Code's own format
+(`.claude-plugin/plugin.json` + `.mcp.json`), because Claude Code reads
+`.mcp.json` and never `mcp.json`. Both MCP declarations describe the same
+stdio server and must be kept in sync. The repo root's
+`.claude-plugin/marketplace.json` publishes the directory as the `nice-pink`
+marketplace:
+
+```
+claude plugin marketplace add nice-pink/ops-repo-mcp && claude plugin install ops-repo@nice-pink
+```
+
+Installing the plugin does **not** install the binary — do that first (see
+**Install** above). The plugin needs no repo path: with `MCP_OPS_REPO_PATH`
+unset it operates on the repo the client is open in. Cursor and Codex install
+steps, and the `npx plugins` route, are in
+[`agents-plugin/MANUAL.md`](agents-plugin/MANUAL.md); the plugin's own layout
+and versioning rules are in
+[`agents-plugin/README.md`](agents-plugin/README.md). The plugin version tracks
+the released server version and is repeated in six files — bump them together
+when the tool surface changes.
+
 ## Release
 
 Release tags are plain major integers: `v1`, `v2`, and so on. `make deploy`
@@ -169,7 +199,6 @@ Once the ops repo carries the file, a client entry needs almost nothing:
       "command": "/absolute/path/to/ops-repo-mcp/bin/mcp-server",
       "args": [],
       "env": {
-        "MCP_OPS_REPO_PATH": "/absolute/path/to/your/ops-repo",
         "MCP_ENV_ALLOWLIST": "dev,staging,prod"
       }
     }
@@ -179,6 +208,63 @@ Once the ops repo carries the file, a client entry needs almost nothing:
 
 `.mcp.json.example` has the fully-populated form for repos with no config file,
 where every layout value comes from the `env` block instead.
+
+### Which repo the server operates on
+
+`MCP_OPS_REPO_PATH` names the clone. When it is unset, the server uses the
+working directory the client launched it in, walked up to the root of its git
+work tree — so the entry above serves any number of ops repos: the repo is
+whichever one you have the client open in, and the same user-level config works
+everywhere. Set the variable when you want one server pinned to one clone
+regardless of where the client is opened.
+
+An inferred repo must **carry a `.ops-repo-mcp.yaml` at its root**. The file is
+otherwise optional, but on this path it doubles as the marker that says a human
+intended this repository to be deployed from. A git repo on its own is not that
+statement, and the consequences of resolving the wrong one are not confined to a
+failed call: the inferred repo supplies the branch guard, the layout, and the
+remote that the pre-flight `git fetch` authenticates against. Without a marker,
+any ancestor `.git` becomes a deploy target — a dotfiles repo at `$HOME` would
+make `$HOME` the ops repo for every client launched anywhere below it.
+
+`MCP_ALLOW_ANY_CWD_REPO=1` waives the marker and accepts any git repo the client
+is opened in. It logs a warning on every start. It does not waive the git
+requirement: without a repo there is no branch guard, no dirty check, and no
+rollback history.
+
+`GITHUB_TOKEN` is **not** adopted as a fallback for `MCP_GIT_TOKEN` on the
+inferred path. The token is attached as HTTP Basic auth to the pre-flight fetch
+and is not scoped by host, so it goes to whatever `origin` the resolved repo
+has. While the repo was always `MCP_OPS_REPO_PATH`, you chose that remote; an
+inferred repo is chosen by which directory the client happened to open, and an
+ambient `GITHUB_TOKEN` is exported on most developer machines for unrelated
+reasons. Set `MCP_GIT_TOKEN` to use a token here deliberately; the suppression
+is logged when a `GITHUB_TOKEN` was present and ignored.
+
+The two paths differ in what is checked, not in what is normalised. Both resolve
+a path inside a work tree to that work tree's root. A designated
+`MCP_OPS_REPO_PATH` is then accepted whether or not it is a git repo at all,
+exactly as before. An inferred path additionally has to be a work tree the
+server can operate on — HEAD must resolve, which rejects a linked worktree from
+`git worktree add`, whose refs live in the main repo's commondir where the
+runner cannot read them. Accepting one would produce a detached-HEAD error on a
+branch that is not detached, and a `DIRTY_REPO` listing every tracked file.
+
+The resolution is logged on every start: `server_start` carries `opsRepo` and
+`opsRepoSource` (`MCP_OPS_REPO_PATH` or `cwd`), and the `cwd` case also logs an
+`ops_repo_from_cwd` warning. Check that line first if a deploy lands somewhere
+unexpected — whether the client passes its session directory as the server's
+working directory is the client's behaviour, not this server's.
+
+Three consequences worth knowing:
+
+- Changing directory inside a running session does not move the server. The repo
+  is resolved once, at startup, so the client has to restart it.
+- A submodule is its own work tree. A client opened inside one resolves to the
+  submodule, not the repo containing it; the marker requirement is what stops
+  that becoming a silent misplacement.
+- Startup failing with `CONFIG_ERROR` is the intended outcome for a working
+  directory that is not a marked ops repo, including `/`.
 
 ### Branch guard
 
@@ -240,7 +326,9 @@ The server logs the resolved layout and the source of each value
 (`env` / `repo-file` / `default`) at startup under `layout_resolved`, in a stable
 field order so two startups can be diffed.
 
-`MCP_IGNORE_REPO_CONFIG=1` skips the file entirely. It is the escape hatch for a
+`MCP_IGNORE_REPO_CONFIG=1` skips reading the file. It does not skip the
+marker check above, which only tests that the file exists — a broken committed
+file should not silently turn the repo into an unmarked one. It is the escape hatch for a
 committed file that breaks startup: the ops repo is a repo agents write to, so a
 bad line in someone else's commit should not leave you with no way to start the
 server.
@@ -259,7 +347,6 @@ the point).
 
 | Variable | Description |
 |----------|-------------|
-| `MCP_OPS_REPO_PATH` | Absolute path to a local clone of the ops repo. Required. Unset exits with `CONFIG_ERROR`; set but missing, not a directory, or unresolvable exits with `REPO_NOT_FOUND`. |
 | `MCP_ENV_ALLOWLIST` | Environments the server may write to. Required unless `MCP_ALLOW_ALL_ENVS=1` is set: an empty allowlist means every environment, including production, so it must be opted into rather than reached by default. |
 
 ### Optional environment
@@ -269,6 +356,7 @@ var wins when both are set. The `MCP_*` rows are env-only.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `MCP_OPS_REPO_PATH` | _(the working directory, walked up to its git root)_ | Absolute path to a local clone of the ops repo. Set but missing, not a directory, or unresolvable exits with `REPO_NOT_FOUND`; unset with a working directory outside any git work tree exits with `CONFIG_ERROR`. See **Which repo the server operates on**. |
 | `MCP_ALLOWED_BRANCHES` | _(inferred from `origin/HEAD`)_ | Comma-separated branches the tools may write to. Wins over `branch:` in `.ops-repo-mcp.yaml`. See **Branch guard**. |
 | `MCP_ENV_ALLOWLIST` | _(none — startup fails)_ | Comma-separated list of envs the server may write to. **Required** unless `MCP_ALLOW_ALL_ENVS=1`. |
 | `MCP_ALLOW_ALL_ENVS` | _(unset)_ | Set to `1` to run with no environment allowlist, accepting every env including production. Logs a warning on every start. |
@@ -276,7 +364,7 @@ var wins when both are set. The `MCP_*` rows are env-only.
 | `MCP_LOCK_TIMEOUT` | `30s` | Max wait for the per-repo lock. Returns `LOCK_TIMEOUT` on expiry. |
 | `MCP_RUNNER_TIMEOUT` | `60s` | Max wall-clock for a runner invocation. Returns `RUNNER_TIMEOUT` on expiry; the goroutine is leaked and holds the lock until it finishes. |
 | `MCP_GIT_SSH_KEY_PATH` | _(none)_ | SSH key used for `git fetch` / `git pull` against the ops repo's remote. |
-| `MCP_GIT_TOKEN` | falls back to `GITHUB_TOKEN` | HTTPS token for the same. |
+| `MCP_GIT_TOKEN` | falls back to `GITHUB_TOKEN`, but only when `MCP_OPS_REPO_PATH` is set | HTTPS token for the same. See **Which repo the server operates on** for why the fallback is withheld from an inferred repo. |
 | `MCP_GIT_USER` | `mcp-server` | Author name for any commit objects the underlying runner creates. |
 | `MCP_GIT_EMAIL` | _(empty)_ | Author email. |
 | `DS_BASE` | _(empty)_ | Base folder inside the ops repo (e.g. `base/apps`). |
@@ -286,6 +374,7 @@ var wins when both are set. The `MCP_*` rows are env-only.
 | `DS_IMAGE_HISTORY_FILE_NAME` | _(empty)_ | If set, the server appends the new tag to this file (relative to the manifest folder) on successful deploy/promote/rollback. |
 | `DS_EXCEPTIONAL_APPS_FILE` | _(empty)_ | Path to a YAML file describing apps whose image name / path deviates from the default scheme. Must exist on disk if set. |
 | `DS_SRC_ENV` | `staging` | Default source env for `promote` when the caller doesn't pass one. Should match `^[a-z0-9][a-z0-9-]*$`; a value that doesn't logs a startup warning and makes `promote` return `INVALID_INPUT` unless `srcEnv` is passed explicitly. |
+| `MCP_ALLOW_ANY_CWD_REPO` | _(unset)_ | Set to `1` to let an inferred ops repo skip the `.ops-repo-mcp.yaml` marker, accepting any git repo the client is opened in. Logs a warning on every start. No effect when `MCP_OPS_REPO_PATH` is set. |
 | `MCP_IGNORE_REPO_CONFIG` | _(unset)_ | Set to `1` to ignore `.ops-repo-mcp.yaml` entirely and take layout from the env vars and defaults only. |
 
 ## Tools

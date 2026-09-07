@@ -4,7 +4,7 @@
       "command": "mcp-server",
       "args": [],
       "env": {
-        "MCP_OPS_REPO_PATH": "${MCP_OPS_REPO_PATH}",
+        "MCP_OPS_REPO_PATH": "${MCP_OPS_REPO_PATH:-}",
         "MCP_ENV_ALLOWLIST": "${MCP_ENV_ALLOWLIST:-dev,staging,prod}",
         "MCP_LOG_LEVEL": "${MCP_LOG_LEVEL:-info}",
         "MCP_LOCK_TIMEOUT": "${MCP_LOCK_TIMEOUT:-30s}",

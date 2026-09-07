@@ -3,11 +3,17 @@
 # Copy this to the ROOT OF YOUR OPS REPO (not this repo) as `.ops-repo-mcp.yaml`
 # and commit it. The server reads it at startup and uses it for every layout
 # value you have not set as a DS_* env var, so a configured ops repo needs no
-# DS_* variables in the MCP client config at all — only MCP_OPS_REPO_PATH.
+# DS_* variables in the MCP client config at all — only MCP_ENV_ALLOWLIST.
 #
 # Precedence per field: DS_* env var  >  this file  >  built-in default.
 #
-# Set MCP_IGNORE_REPO_CONFIG=1 to make the server skip this file entirely.
+# It doubles as the ops-repo MARKER: when MCP_OPS_REPO_PATH is unset the server
+# operates on the repo the client was launched in, and refuses to unless that
+# repo carries this file at its root. MCP_ALLOW_ANY_CWD_REPO=1 waives that.
+#
+# Set MCP_IGNORE_REPO_CONFIG=1 to make the server skip READING this file. The
+# marker check only tests that it exists, so a committed file that fails to
+# parse does not also stop the repo counting as an ops repo.
 #
 # This file carries LAYOUT ONLY. It cannot set MCP_ENV_ALLOWLIST, the git
 # credentials, MCP_OPS_REPO_PATH, or the timeouts, and the server refuses to

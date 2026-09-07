@@ -49,7 +49,6 @@ machine, so there is nothing hosted to point at. Install the binary
     "command": "mcp-server",
     "args": [],
     "env": {
-      "MCP_OPS_REPO_PATH": "${MCP_OPS_REPO_PATH}",
       "MCP_ENV_ALLOWLIST": "dev,staging,prod"
     }
   }
@@ -65,12 +64,36 @@ There is no authentication and no network service. The only credentials involved
 `MCP_GIT_SSH_KEY_PATH` / `MCP_GIT_TOKEN`, which the server uses for the `git fetch` it
 runs against the ops repo's remote before every change.
 
-`MCP_OPS_REPO_PATH` is required and the server exits at startup without it, so export it
-before starting the client:
+### Which repo it operates on
+
+With `MCP_OPS_REPO_PATH` unset, the server uses the working directory the client launched it
+in, walked up to the root of its git work tree. One installed plugin therefore serves every
+ops repo you work in — the repo is whichever one the client is open in. The shipped
+declarations pass the variable through as `${MCP_OPS_REPO_PATH:-}` (in clients that expand
+it), so exporting it pins the server to one clone and leaving it unset keeps the
+per-directory behaviour.
 
 ```bash
-export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo
+export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo   # only to pin one clone
 ```
+
+An inferred repo has to earn it, because a git repo is not a statement that anyone wants to
+deploy from it — and the resolved repo supplies the branch guard, the layout, and the remote
+the pre-flight fetch authenticates against:
+
+- It must carry a **`.ops-repo-mcp.yaml` at its root**, which doubles as the ops-repo
+  marker. `MCP_ALLOW_ANY_CWD_REPO=1` waives that and accepts any git repo, with a warning
+  on every start.
+- HEAD must resolve, so a linked worktree from `git worktree add` is refused: its refs live
+  in the main repo's commondir, which the runner cannot read.
+- `GITHUB_TOKEN` is not adopted as a fallback for `MCP_GIT_TOKEN` here. The token is
+  attached to the pre-flight fetch unscoped by host, and an inferred repo's `origin` is
+  chosen by which directory the client opened. Set `MCP_GIT_TOKEN` to use one deliberately.
+
+Startup exits with `CONFIG_ERROR` naming the directory when any of that fails. The
+`server_start` log line carries `opsRepo` and `opsRepoSource` — read it first when a deploy
+lands in the wrong repo, since whether the client passes its session directory through is
+the client's behaviour.
 
 ### Where the layout comes from
 
