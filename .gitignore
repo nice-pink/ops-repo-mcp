@@ -1,0 +1,8 @@
+.DS_Store
+*/.DS_Store
+bin/
+dist/
+/mcp-server
+cover.out
+.env
+.mcp.json

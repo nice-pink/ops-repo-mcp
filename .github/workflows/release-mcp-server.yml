@@ -1,0 +1,144 @@
+name: Release MCP Server
+
+on:
+  push:
+    tags: [ 'mcp-server-v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the tag prefix (e.g. 0.1.0). Artifacts are uploaded to the workflow run, no release is created.'
+        required: false
+        default: 'dev'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      # cmd/mcp-server/stdout_safety_test.go is the stdout-purity guard: any
+      # write to stdout would corrupt the MCP JSON-RPC framing. repo-services
+      # keeps the complementary `make audit-stdout` check over pkg/.
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve version
+        id: version
+        env:
+          # Via env, not direct interpolation: the dispatch input is
+          # attacker-controlled text as far as the shell is concerned.
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            case "${GITHUB_REF_NAME}" in
+              mcp-server-v*) version="${GITHUB_REF_NAME#mcp-server-v}" ;;
+              *) echo "refusing to build from non-mcp-server tag: ${GITHUB_REF_NAME}" >&2; exit 1 ;;
+            esac
+          else
+            version="${INPUT_VERSION:-dev}-$(git rev-parse --short HEAD)"
+          fi
+          case "$version" in
+            *[!A-Za-z0-9._-]*) echo "invalid version: $version" >&2; exit 1 ;;
+          esac
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          name="mcp-server_${GOOS}_${GOARCH}"
+          mkdir -p "dist/${name}"
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X main.serverVersion=${{ steps.version.outputs.version }}" \
+            -o "dist/${name}/mcp-server" \
+            ./cmd/mcp-server
+          tar -czf "dist/${name}.tar.gz" -C "dist/${name}" mcp-server
+          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
+
+      - name: Verify binary runs (native only)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: ./dist/mcp-server_linux_amd64/mcp-server --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcp-server_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    # Both conditions matter: workflow_dispatch accepts a tag as its ref, so
+    # github.ref_type == 'tag' alone would let a manual run publish — and
+    # dispatching against an existing v* container-image tag would rewrite
+    # that release's name, notes and assets.
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'mcp-server-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Collect checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          cat *.tar.gz.sha256 > checksums.txt
+          rm -f *.tar.gz.sha256
+          sha256sum -c checksums.txt
+          cat checksums.txt
+
+      - name: Create release
+        # SHA-pinned: this is the only step holding a contents:write token, and
+        # a mutable @v3 ref would let an upstream tag move rewrite every
+        # release in this repo.
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          name: MCP server ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            install.sh

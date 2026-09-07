@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "deploy-promote": {
+      "command": "/absolute/path/to/mcp-server",
+      "args": [],
+      "env": {
+        "MCP_OPS_REPO_PATH":   "/PATH/TO/YOUR/OPS-REPO",
+        "MCP_ENV_ALLOWLIST":   "dev,staging,prod",
+        "MCP_LOG_LEVEL":       "info",
+        "MCP_LOCK_TIMEOUT":    "30s",
+        "MCP_RUNNER_TIMEOUT":  "60s",
+
+        "MCP_GIT_SSH_KEY_PATH": "",
+        "MCP_GIT_TOKEN":        "",
+        "MCP_GIT_USER":         "mcp-server",
+        "MCP_GIT_EMAIL":        "mcp-server@local",
+
+        "DS_BASE":            "base/resources",
+        "DS_NAMESPACE":       "default",
+        "DS_PATH_SCHEME":     "{base}/{namespace}/{app}/{env}",
+        "DS_IMAGE_FILE_NAME": "deployment.yaml",
+        "DS_SRC_ENV":         "staging"
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-envs
+  labels:
+    app: test-envs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-envs
+  template:
+    metadata:
+      labels:
+        app: test-envs
+    spec:
+      containers:
+      - name: test-envs
+        image: test-envs:1.14.2
+        ports:
+        - containerPort: 80
