@@ -24,7 +24,7 @@ func main() {
 			versionJSON, _ := json.Marshal(map[string]string{
 				"name":            serverName,
 				"version":         serverVersion,
-				"protocolVersion": "2024-11-05",
+				"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
 			})
 			fmt.Printf("%s\n", versionJSON)
 			return
