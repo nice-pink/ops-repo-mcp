@@ -145,8 +145,16 @@ artifacts without creating a release — useful for testing the pipeline.
 
 ## Configure
 
-Point your MCP client at the binary. A copy-paste example lives in
-`.mcp.json.example`; minimal config:
+Configuration comes from two places. **Layout** — where manifests live inside
+the ops repo — belongs in a `.ops-repo-mcp.yaml` committed at the ops repo
+root. **Operational** settings — which repo, which envs are permitted,
+credentials, timeouts — stay in the MCP client's `env` block.
+
+Precedence for every layout field: `DS_*` env var > `.ops-repo-mcp.yaml` >
+built-in default. An empty env var counts as unset, so a client config may pass
+`DS_*` through without shadowing the file.
+
+Once the ops repo carries the file, a client entry needs almost nothing:
 
 ```json
 {
@@ -155,25 +163,78 @@ Point your MCP client at the binary. A copy-paste example lives in
       "command": "/absolute/path/to/ops-repo-mcp/bin/mcp-server",
       "args": [],
       "env": {
-        "MCP_OPS_REPO_PATH":   "/absolute/path/to/your/ops-repo",
-        "MCP_ENV_ALLOWLIST":   "dev,staging,prod",
-        "DS_BASE":             "base/apps",
-        "DS_PATH_SCHEME":      "{base}/{app}/{env}",
-        "DS_IMAGE_FILE_NAME":  "deployment.yaml",
-        "DS_SRC_ENV":          "dev"
+        "MCP_OPS_REPO_PATH": "/absolute/path/to/your/ops-repo",
+        "MCP_ENV_ALLOWLIST": "dev,staging,prod"
       }
     }
   }
 }
 ```
 
+`.mcp.json.example` has the fully-populated form for repos with no config file,
+where every layout value comes from the `env` block instead.
+
+### Layout config file
+
+Optional. `.ops-repo-mcp.yaml` at the root of the **ops repo** (not this repo);
+`.ops-repo-mcp.yaml.example` is a documented template to copy. Read once, at
+startup — commit a change and restart the client for it to take effect. The
+`exceptionalAppsFile` it points at is the exception: that is re-read on every
+call.
+
+```yaml
+version: 1
+layout:
+  base: base/apps
+  namespace: ""
+  pathScheme: "{base}/{app}/{env}"
+  imageFileName: deployment.yaml
+  imageHistoryFileName: ""
+  exceptionalAppsFile: ""
+  srcEnv: staging
+```
+
+Each key maps to the `DS_*` variable of the same name. Validation runs once, on
+the value that actually wins, so the file is not a way around a check — and a
+field you have overridden with its `DS_*` variable cannot make the server refuse
+to start, however broken the committed value is.
+
+`base` and `pathScheme` must be relative and `..`-free; `imageFileName` and
+`imageHistoryFileName` must not contain `/` or `..`. `exceptionalAppsFile` is
+relative to the repo root, must be a regular file, and is confined to the repo
+even through a symlink — unlike `DS_EXCEPTIONAL_APPS_FILE`, which an operator
+sets and may point anywhere on the machine. The config file itself is confined
+the same way.
+
+The server logs the resolved layout and the source of each value
+(`env` / `repo-file` / `default`) at startup under `layout_resolved`, in a stable
+field order so two startups can be diffed.
+
+`MCP_IGNORE_REPO_CONFIG=1` skips the file entirely. It is the escape hatch for a
+committed file that breaks startup: the ops repo is a repo agents write to, so a
+bad line in someone else's commit should not leave you with no way to start the
+server.
+
+**This file carries layout only, by design.** It cannot set
+`MCP_ENV_ALLOWLIST`, `MCP_OPS_REPO_PATH`, the git credentials, or the timeouts.
+Decoding is strict, so a file that tries to set one of them makes the server
+exit with `CONFIG_ERROR` rather than being quietly ignored. The ops repo is a
+repository agents are expected to write to; a pull request against it must not
+be able to widen what the server may touch or where it sends credentials. An
+unrecognised `version` is rejected the same way, as is a second YAML document
+(only the first would be read, so silently dropping the rest would contradict
+the point).
+
 ### Required environment
 
 | Variable | Description |
 |----------|-------------|
-| `MCP_OPS_REPO_PATH` | Absolute path to a local clone of the ops repo. Required; server exits with `REPO_NOT_FOUND` if missing. |
+| `MCP_OPS_REPO_PATH` | Absolute path to a local clone of the ops repo. Required. Unset exits with `CONFIG_ERROR`; set but missing, not a directory, or unresolvable exits with `REPO_NOT_FOUND`. |
 
 ### Optional environment
+
+Every `DS_*` row can instead come from `.ops-repo-mcp.yaml` (see above); the env
+var wins when both are set. The `MCP_*` rows are env-only.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -191,7 +252,8 @@ Point your MCP client at the binary. A copy-paste example lives in
 | `DS_IMAGE_FILE_NAME` | `deployment.yaml` | Filename of the manifest the server rewrites. No `/` or `..`. |
 | `DS_IMAGE_HISTORY_FILE_NAME` | _(empty)_ | If set, the server appends the new tag to this file (relative to the manifest folder) on successful deploy/promote/rollback. |
 | `DS_EXCEPTIONAL_APPS_FILE` | _(empty)_ | Path to a YAML file describing apps whose image name / path deviates from the default scheme. Must exist on disk if set. |
-| `DS_SRC_ENV` | `staging` | Default source env for `promote` when the caller doesn't pass one. |
+| `DS_SRC_ENV` | `staging` | Default source env for `promote` when the caller doesn't pass one. Should match `^[a-z0-9][a-z0-9-]*$`; a value that doesn't logs a startup warning and makes `promote` return `INVALID_INPUT` unless `srcEnv` is passed explicitly. |
+| `MCP_IGNORE_REPO_CONFIG` | _(unset)_ | Set to `1` to ignore `.ops-repo-mcp.yaml` entirely and take layout from the env vars and defaults only. |
 
 ## Tools
 

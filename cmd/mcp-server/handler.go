@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nice-pink/repo-services/pkg/exceptional"
 	"github.com/nice-pink/repo-services/pkg/manifest"
+	"github.com/nice-pink/repo-services/pkg/models"
 	"github.com/nice-pink/repo-services/pkg/runner"
 	"github.com/nice-pink/repo-services/pkg/util"
 
@@ -143,6 +144,29 @@ func (h *handler) relPath(target string) (string, error) {
 	return filepath.Rel(h.cfg.OpsRepoPath, target)
 }
 
+// checkAppPaths confines every path an app resolves to — the manifest and, if
+// configured, the history file.
+//
+// This must be re-run inside the lock AFTER prePullSequence, not only in the
+// pre-flight. The exceptional-apps file is re-read from disk on every BuildApp
+// call and can carry an arbitrary per-app/per-env path, so a pull (or anything
+// else that rewrites that file between the pre-flight and the write) can move
+// the target after it was checked. It is also the only check applied to a path
+// the server merely READS, such as promote's source manifest — an unconfined
+// read would return file contents outside the repo in the tool response and
+// then write them into a committed manifest.
+func (h *handler) checkAppPaths(app models.App) *mcpError {
+	if _, e := h.resolveAndCheckPath(app.File); e != nil {
+		return e
+	}
+	if app.History != "" {
+		if _, e := h.resolveAndCheckPath(app.History); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // prePullSequence runs inside the runner goroutine (under the lock):
 // 1. Opens the repo.
 // 2. Refuses if the working tree is dirty (tracked changes only).
@@ -264,6 +288,13 @@ func (h *handler) HandleDeploy(ctx context.Context, req mcp.CallToolRequest) (*m
 	fn := func() error {
 		// 1. Pre-pull (dirty/ahead checks + pull)
 		if e := h.prePullSequence(); e != nil {
+			return e
+		}
+
+		// 1b. Re-confine the target AFTER the pull. runner.Deploy rebuilds the
+		// app from flags and re-reads the exceptional-apps file, so the pull may
+		// have moved the path validated in the pre-flight.
+		if e := h.checkAppPaths(mh.BuildApp(flags, tag)); e != nil {
 			return e
 		}
 
@@ -400,6 +431,11 @@ func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (
 
 	fn := func() error {
 		if e := h.prePullSequence(); e != nil {
+			return e
+		}
+
+		// Re-confine the target AFTER the pull; see checkAppPaths.
+		if e := h.checkAppPaths(mh.BuildApp(flags, "")); e != nil {
 			return e
 		}
 
@@ -587,8 +623,19 @@ func (h *handler) HandlePromote(ctx context.Context, req mcp.CallToolRequest) (*
 			return e
 		}
 
-		// 2. Resolve srcEnv current tag (after pull, under lock)
+		// 1b. Re-confine the destination AFTER the pull; see checkAppPaths.
+		if e := h.checkAppPaths(mh.BuildApp(destFlags, "")); e != nil {
+			return e
+		}
+
+		// 2. Resolve srcEnv current tag (after pull, under lock).
+		// The SOURCE path must be confined too: it is read, and its contents are
+		// returned as resolvedTag and then written into the destination manifest.
+		// An unconfined source is a read of an arbitrary file on disk.
 		srcApp := mh.BuildApp(srcFlags, "")
+		if e := h.checkAppPaths(srcApp); e != nil {
+			return e
+		}
 		currentSrcTag := mh.GetCurrentTag(srcApp)
 		if currentSrcTag == "" {
 			return errNoCurrentTag(app, srcEnv)

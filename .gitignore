@@ -6,3 +6,9 @@ dist/
 cover.out
 .env
 .mcp.json
+# the plugin ships its own Claude Code MCP declaration — it is not local config
+!agents-plugin/.mcp.json
+CLAUDE.local.md
+events.jsonl
+.claude
+.agent

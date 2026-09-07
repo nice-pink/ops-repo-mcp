@@ -30,6 +30,12 @@ type serverConfig struct {
 	DSImageHistoryFileName  string
 	DSExceptionalAppsFile   string
 	DSSrcEnv                string
+
+	// RepoConfigFound reports whether .ops-repo-mcp.yaml was present at the ops
+	// repo root. LayoutSources records, per layout field, whether the resolved
+	// value came from the env block, that file, or the built-in default.
+	RepoConfigFound bool
+	LayoutSources   layoutSource
 }
 
 // validation regexes — applied to DS_* env vars
@@ -93,47 +99,68 @@ func loadConfig() serverConfig {
 	// MCP_GIT_EMAIL
 	cfg.GitEmail = os.Getenv("MCP_GIT_EMAIL")
 
-	// DS_NAMESPACE
-	cfg.DSNamespace = os.Getenv("DS_NAMESPACE")
-	if cfg.DSNamespace != "" && !reNamespaceVal.MatchString(cfg.DSNamespace) {
-		fatal(codeConfigError,fmt.Sprintf("DS_NAMESPACE %q does not match ^[a-z0-9][a-z0-9-]*$", cfg.DSNamespace))
+	// .ops-repo-mcp.yaml — optional layout config committed in the ops repo.
+	// Layout only: it can never set credentials, timeouts, or the env allowlist
+	// (see repoConfig). Precedence for every field is
+	// env var > repo file > built-in default, applied by resolveLayout.
+	rc, rcErr := loadRepoConfig(cfg.OpsRepoPath)
+	if rcErr != nil {
+		fatal(codeConfigError, rcErr.Error())
+	}
+	var fl repoConfigLayout
+	if rc != nil {
+		fl = rc.Layout
 	}
 
-	// DS_BASE
-	cfg.DSBase = os.Getenv("DS_BASE")
-	if cfg.DSBase != "" && !reBaseVal.MatchString(cfg.DSBase) {
-		fatal(codeConfigError,fmt.Sprintf("DS_BASE %q does not match ^[A-Za-z0-9_./-]+$", cfg.DSBase))
+	lv, sources, layoutErr := resolveLayout(os.Getenv, fl)
+	if layoutErr != nil {
+		fatal(codeConfigError, layoutErr.Error())
+	}
+	cfg.DSNamespace = lv.Namespace
+	cfg.DSBase = lv.Base
+	cfg.DSPathScheme = lv.PathScheme
+	cfg.DSImageFileName = lv.ImageFileName
+	cfg.DSImageHistoryFileName = lv.ImageHistoryFileName
+	cfg.DSSrcEnv = lv.SrcEnv
+
+	// DS_SRC_ENV is only ever used as a default for promote's srcEnv, and the
+	// promote handler re-validates it per call (returning INVALID_INPUT). Warn
+	// rather than refuse to start: an odd-but-set value used to break only
+	// promote-without-srcEnv, and turning that into a startup exit would take
+	// deploy and rollback down with it.
+	if !reNamespaceVal.MatchString(cfg.DSSrcEnv) {
+		slog.Default().Warn("invalid_src_env",
+			"value", cfg.DSSrcEnv,
+			"source", sources["srcEnv"],
+			"msg", "does not match ^[a-z0-9][a-z0-9-]*$; promote will return INVALID_INPUT unless srcEnv is passed explicitly",
+		)
 	}
 
-	// DS_PATH_SCHEME
-	cfg.DSPathScheme = os.Getenv("DS_PATH_SCHEME")
-	if cfg.DSPathScheme == "" {
-		cfg.DSPathScheme = "{base}/{namespace}/{app}/{env}"
-	}
-	if err := validatePathScheme(cfg.DSPathScheme); err != nil {
-		fatal(codeConfigError,fmt.Sprintf("DS_PATH_SCHEME: %v", err))
-	}
-
-	// DS_IMAGE_FILE_NAME
-	cfg.DSImageFileName = os.Getenv("DS_IMAGE_FILE_NAME")
-	if cfg.DSImageFileName == "" {
-		cfg.DSImageFileName = "deployment.yaml"
-	}
-	if !validateFileName(cfg.DSImageFileName) {
-		fatal(codeConfigError,fmt.Sprintf("DS_IMAGE_FILE_NAME %q: must not contain '/' or '..'", cfg.DSImageFileName))
-	}
-
-	// DS_IMAGE_HISTORY_FILE_NAME
-	cfg.DSImageHistoryFileName = os.Getenv("DS_IMAGE_HISTORY_FILE_NAME")
-	if cfg.DSImageHistoryFileName != "" && !validateFileName(cfg.DSImageHistoryFileName) {
-		fatal(codeConfigError,fmt.Sprintf("DS_IMAGE_HISTORY_FILE_NAME %q: must not contain '/' or '..'", cfg.DSImageHistoryFileName))
-	}
-
-	// DS_EXCEPTIONAL_APPS_FILE — must exist on disk if set
+	// DS_EXCEPTIONAL_APPS_FILE — must exist on disk if set. The env var may point
+	// anywhere the operator likes; the repo-file form is relative to the repo root
+	// and is confined to it.
 	cfg.DSExceptionalAppsFile = os.Getenv("DS_EXCEPTIONAL_APPS_FILE")
 	if cfg.DSExceptionalAppsFile != "" {
-		if _, err := os.Stat(cfg.DSExceptionalAppsFile); err != nil {
-			fatal(codeConfigError,fmt.Sprintf("DS_EXCEPTIONAL_APPS_FILE %q does not exist or is not accessible: %v", cfg.DSExceptionalAppsFile, err))
+		sources["exceptionalAppsFile"] = srcFromEnv
+		fi, err := os.Stat(cfg.DSExceptionalAppsFile)
+		if err != nil {
+			fatal(codeConfigError, fmt.Sprintf("DS_EXCEPTIONAL_APPS_FILE %q does not exist or is not accessible: %v", cfg.DSExceptionalAppsFile, err))
+		}
+		// A non-regular file panics deep in the runner's reader on a code path
+		// that is not recovered.
+		if !fi.Mode().IsRegular() {
+			fatal(codeConfigError, fmt.Sprintf("DS_EXCEPTIONAL_APPS_FILE %q is not a regular file", cfg.DSExceptionalAppsFile))
+		}
+	} else {
+		resolved, err := rc.resolveExceptionalAppsFile(cfg.OpsRepoPath)
+		if err != nil {
+			fatal(codeConfigError, fmt.Sprintf("%s: %v", repoConfigFileName, err))
+		}
+		cfg.DSExceptionalAppsFile = resolved
+		if resolved != "" {
+			sources["exceptionalAppsFile"] = srcFromFile
+		} else {
+			sources["exceptionalAppsFile"] = srcFromDefault
 		}
 	}
 
@@ -142,11 +169,8 @@ func loadConfig() serverConfig {
 		slog.Default().Warn("ds_src_path_ignored", "msg", "DS_SRC_PATH is set but ignored by mcp-server; MCP_OPS_REPO_PATH is always used")
 	}
 
-	// DS_SRC_ENV
-	cfg.DSSrcEnv = os.Getenv("DS_SRC_ENV")
-	if cfg.DSSrcEnv == "" {
-		cfg.DSSrcEnv = "staging"
-	}
+	cfg.RepoConfigFound = rc != nil
+	cfg.LayoutSources = sources
 
 	return cfg
 }

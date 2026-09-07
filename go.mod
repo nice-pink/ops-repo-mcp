@@ -6,6 +6,7 @@ require (
 	github.com/go-git/go-git/v6 v6.0.0-20251128074608-48f817f57805
 	github.com/mark3labs/mcp-go v0.32.0
 	github.com/nice-pink/repo-services v0.1.3-0.20260622090523-f23c16a64d8f
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -29,5 +30,4 @@ require (
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

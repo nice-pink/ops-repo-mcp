@@ -1,4 +1,5 @@
 {
+  "_comment": "Fully-populated form. If your ops repo carries a .ops-repo-mcp.yaml (see .ops-repo-mcp.yaml.example), drop every DS_* entry below and keep only MCP_OPS_REPO_PATH plus MCP_ENV_ALLOWLIST.",
   "mcpServers": {
     "deploy-promote": {
       "command": "/absolute/path/to/mcp-server",

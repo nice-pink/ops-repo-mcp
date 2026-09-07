@@ -1,0 +1,12 @@
+{
+  "name": "ops-repo",
+  "description": "Deploy, promote, and roll back application image tags in a GitOps ops repository. Mutates manifests and hands the calling agent a git commit directive.",
+  "version": "0.1.0",
+  "author": {
+    "name": "nice-pink",
+    "url": "https://github.com/nice-pink"
+  },
+  "homepage": "https://github.com/nice-pink/ops-repo-mcp",
+  "repository": "https://github.com/nice-pink/ops-repo-mcp",
+  "keywords": ["gitops", "kubernetes", "deploy", "promote", "rollback", "ops-repo"]
+}

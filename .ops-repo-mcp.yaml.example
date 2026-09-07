@@ -1,0 +1,51 @@
+# Example .ops-repo-mcp.yaml
+#
+# Copy this to the ROOT OF YOUR OPS REPO (not this repo) as `.ops-repo-mcp.yaml`
+# and commit it. The server reads it at startup and uses it for every layout
+# value you have not set as a DS_* env var, so a configured ops repo needs no
+# DS_* variables in the MCP client config at all — only MCP_OPS_REPO_PATH.
+#
+# Precedence per field: DS_* env var  >  this file  >  built-in default.
+#
+# Set MCP_IGNORE_REPO_CONFIG=1 to make the server skip this file entirely.
+#
+# This file carries LAYOUT ONLY. It cannot set MCP_ENV_ALLOWLIST, the git
+# credentials, MCP_OPS_REPO_PATH, or the timeouts, and the server refuses to
+# start if it tries — this file lives in a repo that agents write to, so a pull
+# request against it must not be able to widen what the server may touch.
+
+version: 1
+
+layout:
+  # Base folder inside the ops repo. Default: empty.
+  base: base/apps
+
+  # Kubernetes namespace, also substituted into pathScheme as {namespace}.
+  # Leave empty for a namespace-less tree. A per-call `namespace` argument
+  # overrides this. Default: empty.
+  namespace: ""
+
+  # Template for the manifest folder. Must contain {app} and {env}; '..' is
+  # rejected. Default: "{base}/{namespace}/{app}/{env}".
+  pathScheme: "{base}/{app}/{env}"
+
+  # Filename of the manifest the server rewrites. No '/' or '..'.
+  # Default: deployment.yaml
+  imageFileName: deployment.yaml
+
+  # If set, the new tag is appended to this file (relative to the manifest
+  # folder) and it joins filesToStage on real calls. Default: empty (disabled).
+  imageHistoryFileName: ""
+
+  # Apps whose image name or path deviates from pathScheme. Must be a regular
+  # file, relative to the ops repo root, and confined to it even through a
+  # symlink. Unlike DS_EXCEPTIONAL_APPS_FILE (which an operator sets and may
+  # point anywhere on the machine), this form cannot leave the repo.
+  # Re-read on every call, so edits take effect without a server restart. The
+  # per-app paths inside it are confined too, before every read and every write.
+  # Default: empty (no exceptions).
+  exceptionalAppsFile: ""
+
+  # Default source environment for `promote` when the caller omits srcEnv.
+  # Default: staging
+  srcEnv: staging

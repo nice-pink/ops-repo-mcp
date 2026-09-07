@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ops-repo",
+  "version": "0.1.0",
+  "description": "ops-repo-mcp — drive deploy / promote / rollback image-tag changes against a GitOps ops repository from any agent. The server rewrites manifests but never commits; the agent executes the returned commit directive.",
+  "author": {
+    "name": "nice-pink",
+    "url": "https://github.com/nice-pink"
+  },
+  "homepage": "https://github.com/nice-pink/ops-repo-mcp",
+  "repository": "https://github.com/nice-pink/ops-repo-mcp",
+  "keywords": [
+    "gitops",
+    "kubernetes",
+    "deploy",
+    "promote",
+    "rollback",
+    "ops-repo",
+    "manifest",
+    "image-tag"
+  ]
+}

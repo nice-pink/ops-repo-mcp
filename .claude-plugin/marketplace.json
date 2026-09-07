@@ -1,0 +1,26 @@
+{
+  "name": "nice-pink",
+  "owner": {
+    "name": "nice-pink",
+    "url": "https://github.com/nice-pink"
+  },
+  "metadata": {
+    "description": "nice-pink ops tooling for coding agents.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "ops-repo",
+      "source": "./agents-plugin",
+      "description": "Deploy, promote, and roll back application image tags in a GitOps ops repository. Mutates manifests and hands the calling agent a git commit directive.",
+      "version": "0.1.0",
+      "author": {
+        "name": "nice-pink",
+        "url": "https://github.com/nice-pink"
+      },
+      "homepage": "https://github.com/nice-pink/ops-repo-mcp",
+      "repository": "https://github.com/nice-pink/ops-repo-mcp",
+      "keywords": ["gitops", "kubernetes", "deploy", "promote", "rollback", "ops-repo"]
+    }
+  ]
+}

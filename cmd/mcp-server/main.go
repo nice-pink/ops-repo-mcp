@@ -49,14 +49,34 @@ func main() {
 		slog.Default().Warn("no_env_allowlist", "msg", "MCP_ENV_ALLOWLIST is empty; all environment values are accepted")
 	}
 
+	// Report the resolved layout and where each value came from. Config
+	// precedence that is not logged is config precedence nobody can debug.
+	slog.Default().Info("layout_resolved",
+		"repoConfigFile", repoConfigFileName,
+		"repoConfigFound", cfg.RepoConfigFound,
+		"base", cfg.DSBase,
+		"namespace", cfg.DSNamespace,
+		"pathScheme", cfg.DSPathScheme,
+		"imageFileName", cfg.DSImageFileName,
+		"imageHistoryFileName", cfg.DSImageHistoryFileName,
+		"exceptionalAppsFile", cfg.DSExceptionalAppsFile,
+		"srcEnv", cfg.DSSrcEnv,
+		"sources", cfg.LayoutSources.String(),
+	)
+
 	// Build the handler
 	h := newHandler(cfg)
 
 	// Create MCP server
+	// WithRecovery: a panic inside a tool handler must not take the process down.
+	// The runner goroutine has its own recover, but the pre-flight path (which
+	// calls BuildApp, and through it the exceptional-apps reader that panics on a
+	// read failure) runs outside it.
 	s := server.NewMCPServer(
 		serverName,
 		serverVersion,
 		server.WithToolCapabilities(false),
+		server.WithRecovery(),
 	)
 
 	// Register deploy tool
