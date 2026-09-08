@@ -16,15 +16,21 @@ vet:
 clean:
 	rm -f bin/ops-repo-mcp cover.out
 
-# Create the next release tag locally, without pushing it.
+# Cut the next release tag and push it. This publishes.
 #
 # Release tags are plain major integers (v1, v2, ...). The release workflow
 # strips the leading "v" and compiles the rest into main.serverVersion, so the
 # tag name is the version.
 #
-# The tag is deliberately NOT pushed: the push is what triggers the public
-# release, and that is not something a build target should do on its own. The
-# exact push command is printed instead.
+# The push is the last thing the target does, and it is what triggers the
+# public release: the workflow builds the four platform targets and creates a
+# GitHub release from the tag. There is no separate publish step, and nothing
+# to undo it from here — a pushed tag has to be deleted on the remote.
+#
+# The guards before it are the whole safety margin: it refuses a tree with
+# uncommitted tracked changes, because the tag would not contain them, and it
+# refuses a tag that already exists rather than moving one that a release was
+# already built from.
 deploy:
 	@set -eu; \
 	git fetch --tags --quiet origin 2>/dev/null \

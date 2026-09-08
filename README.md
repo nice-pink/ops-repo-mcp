@@ -167,20 +167,22 @@ response shape changes.
 ## Release
 
 Release tags are plain major integers: `v1`, `v2`, and so on. `make deploy`
-reads the highest existing `v<N>` tag, creates the next one locally, and prints
-the push command. It refuses to tag a working tree with uncommitted changes,
-since the tag would not contain them:
+reads the highest existing `v<N>` tag, creates the next one, and pushes it:
 
 ```
 make deploy
-git push origin v2
 ```
 
-Pushing the tag is the step that publishes. It runs
+**That publishes.** Pushing the tag runs
 `.github/workflows/release-mcp-server.yml`, which runs the tests,
 cross-compiles the four platform targets, and creates a GitHub release with
-the tarballs, `checksums.txt`, and `install.sh`. `make deploy` never pushes on
-its own.
+the tarballs, `checksums.txt`, and `install.sh`. There is no separate publish
+step, and nothing in the Makefile undoes it — backing out means deleting the
+tag on the remote, and deleting the release if the workflow got that far.
+
+Two guards run before the push. It refuses a working tree with uncommitted
+tracked changes, since the tag would not contain them, and it refuses a tag
+that already exists rather than moving one a release was already built from.
 
 The tag's version (minus the prefix) is compiled into the binary via
 `-ldflags -X main.serverVersion=...` and reported by `ops-repo-mcp --version`.
