@@ -155,9 +155,11 @@ claude plugin marketplace add nice-pink/ops-repo-mcp && claude plugin install op
 ```
 
 Installing the plugin does **not** install the binary — do that first (see
-**Install** above). The plugin needs no repo path: with `MCP_OPS_REPO_PATH`
-unset it operates on the repo the client is open in. Cursor and Codex install
-steps, and the `npx plugins` route, are in
+**Install** above). Beyond that the plugin is zero-config: its declarations name
+no repo path, so it operates on whichever ops repo the client is open in,
+provided that repo carries a `.ops-repo-mcp.yaml`. Add `MCP_OPS_REPO_PATH` to
+your own client entry only to pin one server to one clone. Cursor and Codex
+install steps, and the `npx plugins` route, are in
 [`agents-plugin/MANUAL.md`](agents-plugin/MANUAL.md); the plugin's own layout
 and versioning rules are in
 [`agents-plugin/README.md`](agents-plugin/README.md). The plugin version is
@@ -243,9 +245,11 @@ any ancestor `.git` becomes a deploy target — a dotfiles repo at `$HOME` would
 make `$HOME` the ops repo for every client launched anywhere below it.
 
 `MCP_ALLOW_ANY_CWD_REPO=1` waives the marker and accepts any git repo the client
-is opened in. It logs a warning on every start. It does not waive the git
-requirement: without a repo there is no branch guard, no dirty check, and no
-rollback history.
+is opened in. It says so at error level on every start where it actually waived
+one — error, not warning, so that setting `MCP_LOG_LEVEL=error` to quieten the
+server cannot also remove the line telling you any repo you open is a deploy
+target. It does not waive the git or HEAD requirements: without a usable repo
+there is no branch guard, no dirty check, and no rollback history.
 
 `GITHUB_TOKEN` is **not** adopted as a fallback for `MCP_GIT_TOKEN` on the
 inferred path. The token is attached as HTTP Basic auth to the pre-flight fetch

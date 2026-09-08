@@ -84,8 +84,8 @@ deploy from it — and the resolved repo supplies the branch guard, the layout, 
 the pre-flight fetch authenticates against:
 
 - It must carry a **`.ops-repo-mcp.yaml` at its root**, which doubles as the ops-repo
-  marker. `MCP_ALLOW_ANY_CWD_REPO=1` waives that and accepts any git repo, with a warning
-  on every start.
+  marker. `MCP_ALLOW_ANY_CWD_REPO=1` waives that and accepts any git repo, saying so at
+  error level on every start where it actually waived one.
 - HEAD must resolve. That refuses a repo with no commits yet, and a linked worktree from
   `git worktree add`, whose refs live in the main checkout's commondir where the runner
   cannot read them.
@@ -93,7 +93,8 @@ the pre-flight fetch authenticates against:
   attached to the pre-flight fetch unscoped by host, and an inferred repo's `origin` is
   chosen by which directory the client opened. Set `MCP_GIT_TOKEN` to use one deliberately.
 
-Startup exits with `CONFIG_ERROR` naming the directory when any of that fails. The
+Startup exits with `CONFIG_ERROR` naming the directory when either of the first two fails;
+the token rule is not a failure, just a credential the server declines to reuse. The
 `server_start` log line carries `opsRepo` and `opsRepoSource` — read it first when a deploy
 lands in the wrong repo, since whether the client passes its session directory through is
 the client's behaviour.
