@@ -6,7 +6,6 @@
       "command": "ops-repo-mcp",
       "args": [],
       "env": {
-        "MCP_OPS_REPO_PATH": "${MCP_OPS_REPO_PATH:-}",
         "MCP_ENV_ALLOWLIST": "${MCP_ENV_ALLOWLIST:-dev,staging,prod}",
         "MCP_ALLOW_ALL_ENVS": "${MCP_ALLOW_ALL_ENVS:-}",
         "MCP_ALLOWED_BRANCHES": "${MCP_ALLOWED_BRANCHES:-}",

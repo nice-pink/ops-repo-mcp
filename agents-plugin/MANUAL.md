@@ -41,14 +41,14 @@ ops-repo-mcp --version
 
 The server reads its configuration from the `env` block of the client entry.
 
-`MCP_OPS_REPO_PATH` says which clone to operate on, and is **optional**. Unset, the server
-uses the working directory the client launched it in, walked up to the root of its git work
-tree — so one installed plugin serves every ops repo you work in. Set the variable only to
-pin the server to one clone regardless of where the client is opened:
+**No repo path is needed.** The server operates on the working directory the client
+launched it in, walked up to the root of its git work tree, so one installed plugin serves
+every ops repo you work in and the shipped declarations name no path.
 
-```bash
-export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo   # only to pin one clone
-```
+`MCP_OPS_REPO_PATH` remains available as a server variable for pinning one server to one
+clone. The plugin does not declare it. To use it, add it to the `env` block of your own
+client entry — exporting it in a shell will not reliably reach the server, because a client
+need not hand its environment to the process it spawns.
 
 An inferred repo must carry a **`.ops-repo-mcp.yaml` at its root** — the layout file doubles
 as the marker that this repository is meant to be deployed from. Without it, any ancestor
@@ -62,12 +62,11 @@ worktree from `git worktree add`.
 `GITHUB_TOKEN` is not used as a fallback for `MCP_GIT_TOKEN` on the inferred path, because
 the token reaches whatever remote that repo has. Set `MCP_GIT_TOKEN` to use one there.
 
-The declarations in this plugin pass the path through as `${MCP_OPS_REPO_PATH:-}`, so in a
-client that expands it an unset variable stays unset rather than becoming a literal. A path
-that *is* set but does not exist is `REPO_NOT_FOUND` at startup. `server_start` logs the
-resolved `opsRepo` and its `opsRepoSource` (`MCP_OPS_REPO_PATH` or `cwd`) — read that line
-before assuming the server picked the wrong repo, because whether a client passes its
-session directory through is the client's behaviour, not this server's.
+If you do add the path and it does not exist, startup exits with `REPO_NOT_FOUND`.
+`server_start` logs the resolved `opsRepo` and its `opsRepoSource` (`MCP_OPS_REPO_PATH` or
+`cwd`) — read that line before assuming the server picked the wrong repo, because whether a
+client passes its session directory through as the working directory is the client's
+behaviour, not this server's.
 
 `MCP_ENV_ALLOWLIST` is the other one that matters. **The server refuses to start without
 it**, because an empty allowlist would accept every environment including production. This
@@ -288,9 +287,9 @@ Add to `~/.cursor/mcp.json`:
 Cursor infers the transport from the presence of `command`, so there is no `type` field.
 Check Settings → MCP; the server should list `deploy`, `promote`, and `rollback`.
 
-Add `MCP_OPS_REPO_PATH` only to pin one clone, and `DS_*` entries only to override the ops
-repo's `.ops-repo-mcp.yaml`; with that file committed, the one variable above is all this
-entry needs.
+Add `MCP_OPS_REPO_PATH` only if you want this server pinned to one clone, and `DS_*` entries
+only to override the ops repo's `.ops-repo-mcp.yaml`; with that file committed, the one
+variable above is all this entry needs.
 
 ---
 
@@ -321,8 +320,8 @@ args = []
 MCP_ENV_ALLOWLIST = "dev,staging,prod"
 ```
 
-Same as Cursor: add `MCP_OPS_REPO_PATH` only to pin one clone, and `DS_*` keys only to
-override the ops repo's `.ops-repo-mcp.yaml`.
+Same as Cursor: add `MCP_OPS_REPO_PATH` only if you want this server pinned to one clone,
+and `DS_*` keys only to override the ops repo's `.ops-repo-mcp.yaml`.
 
 Verify with `codex mcp list`.
 
@@ -339,7 +338,7 @@ Verify with `codex mcp list`.
 | Server exits immediately, `CONFIG_ERROR: ... git HEAD cannot be resolved` | Either the repo has no commits yet — make one — or the client was launched in a linked worktree (`git worktree add`), whose refs the runner cannot read; use the main checkout instead. |
 | `PULL_FAILED` against a private remote that used to work | `GITHUB_TOKEN` is no longer adopted when the ops repo is inferred from the working directory. Set `MCP_GIT_TOKEN`, or set `MCP_OPS_REPO_PATH`. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |
-| Tools work but write to the wrong repo | `MCP_OPS_REPO_PATH` is unset and the client launched the server somewhere other than the repo you expected. Check `opsRepo` / `opsRepoSource` in the `server_start` stderr line, then set the variable to pin it. |
+| Tools work but write to the wrong repo | The client launched the server somewhere other than the repo you expected. Check `opsRepo` / `opsRepoSource` in the `server_start` stderr line, then add `MCP_OPS_REPO_PATH` to your client entry to pin it. |
 | `spawn ops-repo-mcp ENOENT` | The install directory is not on the `PATH` the client sees. Use the absolute path the installer printed. |
 | Nothing loads in Claude Code | Wrong directory passed to `--plugin-dir`. It must be `agents-plugin`, the directory holding `skills/`. |
 | Installed via `npx plugins add`, skills work, no tools | The CLI did not pick up `.mcp.json`. Declare the server manually per the routes above. |

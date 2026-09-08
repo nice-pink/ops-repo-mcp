@@ -68,16 +68,16 @@ runs against the ops repo's remote before every change.
 
 ### Which repo it operates on
 
-With `MCP_OPS_REPO_PATH` unset, the server uses the working directory the client launched it
-in, walked up to the root of its git work tree. One installed plugin therefore serves every
-ops repo you work in — the repo is whichever one the client is open in. The shipped
-declarations pass the variable through as `${MCP_OPS_REPO_PATH:-}` (in clients that expand
-it), so exporting it pins the server to one clone and leaving it unset keeps the
-per-directory behaviour.
+The server uses the working directory the client launched it in, walked up to the root of
+its git work tree. One installed plugin therefore serves every ops repo you work in — the
+repo is whichever one the client is open in — and the declarations name no repo path at all.
 
-```bash
-export MCP_OPS_REPO_PATH=/absolute/path/to/your/ops-repo   # only to pin one clone
-```
+`MCP_OPS_REPO_PATH` still exists as a server variable, for pinning one server to one clone
+regardless of where the client is opened. The plugin does not pass it through, because
+shipping it would mean every install carried a knob that the default behaviour makes
+unnecessary. To pin a clone, add it to the `env` block of your own client entry — exporting
+it in a shell is not enough on its own, since a client need not pass its environment to the
+server it spawns.
 
 An inferred repo has to earn it, because a git repo is not a statement that anyone wants to
 deploy from it — and the resolved repo supplies the branch guard, the layout, and the remote
