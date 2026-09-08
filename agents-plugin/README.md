@@ -93,11 +93,13 @@ the pre-flight fetch authenticates against:
   attached to the pre-flight fetch unscoped by host, and an inferred repo's `origin` is
   chosen by which directory the client opened. Set `MCP_GIT_TOKEN` to use one deliberately.
 
-Startup exits with `CONFIG_ERROR` naming the directory when either of the first two fails;
-the token rule is not a failure, just a credential the server declines to reuse. The
-`server_start` log line carries `opsRepo` and `opsRepoSource` — read it first when a deploy
-lands in the wrong repo, since whether the client passes its session directory through is
-the client's behaviour.
+When the first two do not hold, the server starts anyway with no ops repo and every tool
+returns `NO_OPS_REPO` naming the reason — this plugin is launched in every session, and most
+sessions are not in an ops repo, so refusing to start would leave it permanently failed in
+the client's list. The third is not a failure at all, just a credential the server declines
+to reuse. The `server_start` log line carries `opsRepo`, `opsRepoSource` and
+`opsRepoAvailable` — read it first when a deploy lands in the wrong repo, since whether the
+client passes its session directory through is the client's behaviour.
 
 ### Where the layout comes from
 
@@ -158,10 +160,11 @@ warning, which has to reach the operator before a revert lands an old image next
 configuration.
 
 `ops-init` is the odd one out: it writes `.ops-repo-mcp.yaml` and calls no tool. That is
-deliberate. The server exits at startup on a missing marker or an invalid layout, so the
-moment the file is needed is exactly the moment `deploy`, `promote` and `rollback` are not
-registered. The skill derives the layout by reading the repo's manifest tree and confirming
-it, rather than asking a user to recite a path scheme they may never have written down.
+deliberate. Without a marker the tools are registered but every call returns `NO_OPS_REPO`,
+and an invalid layout stops the server from starting at all — either way, the moment the
+file is needed is the moment the tools cannot produce it. The skill derives the layout by
+reading the repo's manifest tree and confirming it, rather than asking a user to recite a
+path scheme they may never have written down.
 
 ## Versioning
 

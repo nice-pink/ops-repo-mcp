@@ -295,6 +295,13 @@ func (h *handler) prePullSequence() error {
 
 // HandleDeploy is the MCP tool handler for the "deploy" tool.
 func (h *handler) HandleDeploy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Refused before anything else: without a repo there is no path to compute,
+	// no branch to check and nothing to write. See errNoOpsRepo for why this is
+	// a per-call refusal rather than a startup exit.
+	if h.cfg.OpsRepoUnavailable != "" {
+		return toolMcpError(errNoOpsRepo(h.cfg.OpsRepoUnavailable), "")
+	}
+
 	// --- Input validation ---
 	app := req.GetString("app", "")
 	env := req.GetString("env", "")
@@ -446,6 +453,13 @@ func (h *handler) HandleDeploy(ctx context.Context, req mcp.CallToolRequest) (*m
 // MultiLineChange=true and a Warning string so the caller can stop and
 // review before proceeding to commit the revert.
 func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Refused before anything else: without a repo there is no path to compute,
+	// no branch to check and nothing to write. See errNoOpsRepo for why this is
+	// a per-call refusal rather than a startup exit.
+	if h.cfg.OpsRepoUnavailable != "" {
+		return toolMcpError(errNoOpsRepo(h.cfg.OpsRepoUnavailable), "")
+	}
+
 	// --- Input validation ---
 	app := req.GetString("app", "")
 	env := req.GetString("env", "")
@@ -625,6 +639,13 @@ func (h *handler) HandleRollback(ctx context.Context, req mcp.CallToolRequest) (
 
 // HandlePromote is the MCP tool handler for the "promote" tool.
 func (h *handler) HandlePromote(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Refused before anything else: without a repo there is no path to compute,
+	// no branch to check and nothing to write. See errNoOpsRepo for why this is
+	// a per-call refusal rather than a startup exit.
+	if h.cfg.OpsRepoUnavailable != "" {
+		return toolMcpError(errNoOpsRepo(h.cfg.OpsRepoUnavailable), "")
+	}
+
 	// --- Input validation ---
 	app := req.GetString("app", "")
 	destEnv := req.GetString("destEnv", "")

@@ -10,6 +10,7 @@ const (
 	codePathEscape       = "PATH_ESCAPE"
 	codeRepoNotFound     = "REPO_NOT_FOUND"
 	codeConfigError      = "CONFIG_ERROR"
+	codeNoOpsRepo        = "NO_OPS_REPO"
 	codeDirtyRepo        = "DIRTY_REPO"
 	codeBranchAhead      = "BRANCH_AHEAD"
 	codeBranchNotAllowed = "BRANCH_NOT_ALLOWED"
@@ -48,6 +49,23 @@ func errSameEnv(env string) *mcpError {
 
 func errPathEscape(computed, root string) *mcpError {
 	return &mcpError{code: codePathEscape, message: fmt.Sprintf("computed path %q escapes ops repo root %q", computed, root)}
+}
+
+// errNoOpsRepo is returned by every tool when the server started without an ops
+// repo to work on.
+//
+// This is not a misconfiguration, which is why it is a per-call error and not a
+// startup exit: a plugin installed at user scope is launched in every session,
+// and most sessions are not in an ops repo. Refusing to start there would put a
+// permanent failure in the client's server list, indistinguishable from a real
+// breakage. Nothing can be written without a resolved repo, so starting is safe
+// as long as every tool refuses — which is what this does.
+func errNoOpsRepo(reason string) *mcpError {
+	return &mcpError{
+		code:    codeNoOpsRepo,
+		message: "no ops repo to work on: " + reason,
+		hint:    "this session is not in an ops repo. Commit a " + repoConfigFileName + " at the ops repo's root (the ops-init skill writes one), open the client in that repo, or set MCP_OPS_REPO_PATH in the client entry to name it explicitly.",
+	}
 }
 
 func errDirtyRepo(paths []string) *mcpError {

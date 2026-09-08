@@ -50,6 +50,12 @@ clone. The plugin does not declare it. To use it, add it to the `env` block of y
 client entry — exporting it in a shell will not reliably reach the server, because a client
 need not hand its environment to the process it spawns.
 
+If none of that holds, the server still starts and every tool returns `NO_OPS_REPO` naming
+the reason. That is deliberate: this plugin is launched in every session, and most sessions
+are not in an ops repo — a server that refused to start would sit permanently failed in the
+client's list for the ordinary case. Only a broken `MCP_OPS_REPO_PATH` is fatal, because
+that is a misconfiguration rather than an absent repo.
+
 An inferred repo must carry a **`.ops-repo-mcp.yaml` at its root** — the layout file doubles
 as the marker that this repository is meant to be deployed from. Without it, any ancestor
 `.git` would become a deploy target, and the resolved repo is what supplies the branch
@@ -333,9 +339,7 @@ Verify with `codex mcp list`.
 |---|---|
 | Skills load, no `deploy` / `promote` / `rollback` tools | The server process is not starting. Run `ops-repo-mcp --version` by hand, then check the client's stderr log — the server exits at startup on `REPO_NOT_FOUND` and `CONFIG_ERROR`. |
 | Server exits immediately, `CONFIG_ERROR: MCP_ENV_ALLOWLIST is empty` | No environment allowlist. Set `MCP_ENV_ALLOWLIST` to the environments this server may write to, or `MCP_ALLOW_ALL_ENVS=1` to accept every one including prod. |
-| Server exits immediately, `CONFIG_ERROR: ... not inside a git work tree` | `MCP_OPS_REPO_PATH` is unset and the working directory the client launched the server in is not in a git repo. Open the client in an ops repo clone, or set the variable. |
-| Server exits immediately, `CONFIG_ERROR: ... carries no .ops-repo-mcp.yaml` | The inferred repo is not marked as an ops repo. Run the `ops-init` skill to write one, or set `MCP_OPS_REPO_PATH`, or set `MCP_ALLOW_ANY_CWD_REPO=1`. |
-| Server exits immediately, `CONFIG_ERROR: ... git HEAD cannot be resolved` | Either the repo has no commits yet — make one — or the client was launched in a linked worktree (`git worktree add`), whose refs the runner cannot read; use the main checkout instead. |
+| Server connects, but every call returns `NO_OPS_REPO` | This session is not in an ops repo: not a git repo, HEAD does not resolve, or no `.ops-repo-mcp.yaml` at the root. The stderr line `ops_repo_unavailable` says which. Run the `ops-init` skill to write the marker, open the client in the ops repo, or add `MCP_OPS_REPO_PATH` to the entry — then restart the client, since the repo is resolved once at startup. |
 | `PULL_FAILED` against a private remote that used to work | `GITHUB_TOKEN` is no longer adopted when the ops repo is inferred from the working directory. Set `MCP_GIT_TOKEN`, or set `MCP_OPS_REPO_PATH`. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |
 | Tools work but write to the wrong repo | The client launched the server somewhere other than the repo you expected. Check `opsRepo` / `opsRepoSource` in the `server_start` stderr line, then add `MCP_OPS_REPO_PATH` to your client entry to pin it. |

@@ -27,23 +27,24 @@ const configHelperEnv = "OPS_TEST_CONFIG_HELPER"
 func TestMain(m *testing.M) {
 	if os.Getenv(resolveHelperEnv) == "1" {
 		r := resolveOpsRepoPath()
-		fmt.Printf("%s\t%s\t%s\n", r.Path, r.Source, r.NormalisedFrom)
+		fmt.Printf("%s\t%s\t%s\t%s\n", r.Path, r.Source, r.NormalisedFrom, r.Unresolved)
 		os.Exit(0)
 	}
 	if os.Getenv(configHelperEnv) == "1" {
 		cfg := loadConfig()
-		fmt.Printf("source=%s gitToken=%q suppressed=%t markerWaived=%t notWalkable=%t\n",
+		fmt.Printf("source=%s gitToken=%q suppressed=%t markerWaived=%t notWalkable=%t unavailable=%t path=%q\n",
 			cfg.OpsRepoPathSource, cfg.GitToken, cfg.GitHubTokenSuppressed,
-			cfg.AnyCwdRepoAllowed, cfg.OpsRepoPathNotWalkable != "")
+			cfg.AnyCwdRepoAllowed, cfg.OpsRepoPathNotWalkable != "",
+			cfg.OpsRepoUnavailable != "", cfg.OpsRepoPath)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
 
 type resolveResult struct {
-	path, source, normalisedFrom string
-	exitCode                     int
-	stderr                       string
+	path, source, normalisedFrom, unresolved string
+	exitCode                                 int
+	stderr                                   string
 }
 
 // runResolve re-executes the test binary in helper mode with cwd set to dir and
@@ -78,11 +79,11 @@ func runResolve(t *testing.T, dir string, env ...string) resolveResult {
 	if runErr != nil {
 		t.Fatalf("helper: %v (stderr: %s)", runErr, res.stderr)
 	}
-	fields := strings.SplitN(strings.TrimRight(stdout.String(), "\n"), "\t", 3)
-	if len(fields) != 3 {
-		t.Fatalf("helper stdout %q is not path\\tsource\\tnormalisedFrom (stderr: %s)", stdout.String(), res.stderr)
+	fields := strings.SplitN(strings.TrimRight(stdout.String(), "\n"), "\t", 4)
+	if len(fields) != 4 {
+		t.Fatalf("helper stdout %q is not path\\tsource\\tnormalisedFrom\\tunresolved (stderr: %s)", stdout.String(), res.stderr)
 	}
-	res.path, res.source, res.normalisedFrom = fields[0], fields[1], fields[2]
+	res.path, res.source, res.normalisedFrom, res.unresolved = fields[0], fields[1], fields[2], fields[3]
 	return res
 }
 
@@ -96,6 +97,28 @@ func (r resolveResult) wantOK(t *testing.T, path, source string) {
 	}
 	if r.source != source {
 		t.Errorf("source = %q, want %q", r.source, source)
+	}
+	if r.unresolved != "" {
+		t.Errorf("expected a resolved repo, got: %s", r.unresolved)
+	}
+}
+
+// wantUnresolved asserts the server would start with no ops repo, naming why.
+func (r resolveResult) wantUnresolved(t *testing.T, reasonContains ...string) {
+	t.Helper()
+	if r.exitCode != 0 {
+		t.Fatalf("helper exited %d; an absent ops repo must not stop startup (stderr: %s)", r.exitCode, r.stderr)
+	}
+	if r.unresolved == "" {
+		t.Fatalf("expected no ops repo, but one resolved: %q", r.path)
+	}
+	if r.path != "" {
+		t.Errorf("path must be empty when unresolved, got %q", r.path)
+	}
+	for _, want := range reasonContains {
+		if !strings.Contains(r.unresolved, want) {
+			t.Errorf("reason does not mention %q: %s", want, r.unresolved)
+		}
 	}
 }
 
@@ -319,12 +342,12 @@ func TestResolveFallsBackToCwdRepoRoot(t *testing.T) {
 // deploy from". Without it any ancestor .git — a dotfiles repo at $HOME, say —
 // would become a deploy target, and would supply the branch guard, the layout,
 // and the remote the pre-flight fetch authenticates against.
-func TestResolveCwdWithoutMarkerIsRefused(t *testing.T) {
+func TestResolveCwdWithoutMarkerIsUnresolved(t *testing.T) {
 	repo := tempRepo(t, false)
 	sub := mkdirIn(t, repo, "nested")
 
 	res := runResolve(t, sub)
-	res.wantFatal(t, codeConfigError, repoConfigFileName, allowAnyCwdRepoEnv)
+	res.wantUnresolved(t, repoConfigFileName, allowAnyCwdRepoEnv)
 }
 
 func TestResolveCwdWithoutMarkerAllowedByOptOut(t *testing.T) {
@@ -335,13 +358,13 @@ func TestResolveCwdWithoutMarkerAllowedByOptOut(t *testing.T) {
 	res.wantOK(t, repo, opsRepoPathCwd)
 }
 
-func TestResolveCwdOutsideGitRepoIsConfigError(t *testing.T) {
+func TestResolveCwdOutsideGitRepoIsUnresolved(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
 	res := runResolve(t, dir)
-	res.wantFatal(t, codeConfigError, "not inside a git work tree", opsRepoPathEnv)
+	res.wantUnresolved(t, "not inside a git work tree")
 }
 
 // The opt-out waives the ops-repo marker, not the git requirement: without a
@@ -352,7 +375,7 @@ func TestResolveCwdOptOutStillRequiresGitRepo(t *testing.T) {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
 	res := runResolve(t, dir, allowAnyCwdRepoEnv+"=1")
-	res.wantFatal(t, codeConfigError, "not inside a git work tree")
+	res.wantUnresolved(t, "not inside a git work tree")
 }
 
 // opsRepoPathCwd is compared in main.go and published to operators as the
@@ -525,5 +548,78 @@ func TestMarkerWaivedOnlyWhenMarkerAbsent(t *testing.T) {
 	}
 	if !strings.Contains(out, "markerWaived=true") {
 		t.Errorf("marker absent and waived by the flag: %s", out)
+	}
+}
+
+// A session that is not in an ops repo must still produce a running server. A
+// plugin installed at user scope is launched everywhere, and most places are not
+// ops repos; exiting there puts a permanent failure in the client's server list
+// that cannot be told apart from a real breakage.
+func TestUnmarkedRepoStartsWithNoOpsRepo(t *testing.T) {
+	cases := []struct {
+		name string
+		dir  func(t *testing.T) string
+	}{
+		{"git repo without the marker", func(t *testing.T) string { return tempRepo(t, false) }},
+		{"not a git repo at all", func(t *testing.T) string {
+			d, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatalf("EvalSymlinks: %v", err)
+			}
+			return d
+		}},
+		{"repo with no commits", func(t *testing.T) string {
+			d, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatalf("EvalSymlinks: %v", err)
+			}
+			if _, err := gogit.PlainInit(d, false); err != nil {
+				t.Fatalf("PlainInit: %v", err)
+			}
+			writeMarker(t, d)
+			return d
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, code, stderr := runLoadConfig(t, c.dir(t))
+			if code != 0 {
+				t.Fatalf("server exited %d instead of starting (stderr: %s)", code, stderr)
+			}
+			if !strings.Contains(out, "unavailable=true") {
+				t.Errorf("expected no ops repo: %s", out)
+			}
+			if !strings.Contains(out, `path=""`) {
+				t.Errorf("an unresolved repo must leave the path empty, or downstream reads land on the cwd: %s", out)
+			}
+		})
+	}
+}
+
+// A designated path that is broken is a misconfiguration, not an absent ops
+// repo, and must still stop the server.
+func TestBrokenDesignatedPathStillExits(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
+	_, code, stderr := runLoadConfig(t, tempRepo(t, true), opsRepoPathEnv+"="+missing)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(stderr, codeRepoNotFound) {
+		t.Errorf("stderr does not report %s: %s", codeRepoNotFound, stderr)
+	}
+}
+
+// A marked repo is unaffected by any of the above.
+func TestMarkedRepoStillResolves(t *testing.T) {
+	repo := tempRepo(t, true)
+	out, code, stderr := runLoadConfig(t, repo)
+	if code != 0 {
+		t.Fatalf("exit %d (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(out, "unavailable=false") {
+		t.Errorf("marked repo should resolve: %s", out)
+	}
+	if !strings.Contains(out, `path="`+repo+`"`) {
+		t.Errorf("path = %s, want %q", out, repo)
 	}
 }

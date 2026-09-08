@@ -56,6 +56,10 @@ type serverConfig struct {
 	// repo could not be walked to that repo's root. Empty otherwise.
 	OpsRepoPathNotWalkable string
 
+	// OpsRepoUnavailable is why there is no ops repo for this session. When it is
+	// set, OpsRepoPath is empty and every tool refuses with NO_OPS_REPO.
+	OpsRepoUnavailable string
+
 	// GitHubTokenSuppressed records that a GITHUB_TOKEN was present but not
 	// adopted, because the ops repo was inferred rather than designated.
 	GitHubTokenSuppressed bool
@@ -97,6 +101,7 @@ func loadConfig() serverConfig {
 	cfg.OpsRepoPathSource = opsRepo.Source
 	cfg.OpsRepoPathNormalisedFrom = opsRepo.NormalisedFrom
 	cfg.OpsRepoPathNotWalkable = opsRepo.NotWalkable
+	cfg.OpsRepoUnavailable = opsRepo.Unresolved
 	cfg.AnyCwdRepoAllowed = opsRepo.MarkerWaived
 
 	// MCP_ENV_ALLOWLIST — the guardrail on which environments the tools may
@@ -162,9 +167,16 @@ func loadConfig() serverConfig {
 	// Layout only: it can never set credentials, timeouts, or the env allowlist
 	// (see repoConfig). Precedence for every field is
 	// env var > repo file > built-in default, applied by resolveLayout.
-	rc, rcErr := loadRepoConfig(cfg.OpsRepoPath)
-	if rcErr != nil {
-		fatal(codeConfigError, rcErr.Error())
+	// Only when there is a repo root to read it from. With an empty path the
+	// filename would resolve relative to the process's working directory, which
+	// is the one place it must not be read from once resolution has failed.
+	var rc *repoConfig
+	if cfg.OpsRepoUnavailable == "" {
+		var rcErr error
+		rc, rcErr = loadRepoConfig(cfg.OpsRepoPath)
+		if rcErr != nil {
+			fatal(codeConfigError, rcErr.Error())
+		}
 	}
 	var fl repoConfigLayout
 	if rc != nil {
@@ -208,6 +220,8 @@ func loadConfig() serverConfig {
 		if !fi.Mode().IsRegular() {
 			fatal(codeConfigError, fmt.Sprintf("DS_EXCEPTIONAL_APPS_FILE %q is not a regular file", cfg.DSExceptionalAppsFile))
 		}
+	} else if cfg.OpsRepoUnavailable != "" {
+		sources["exceptionalAppsFile"] = srcFromDefault
 	} else {
 		resolved, err := rc.resolveExceptionalAppsFile(cfg.OpsRepoPath)
 		if err != nil {
@@ -267,6 +281,13 @@ type opsRepoResolution struct {
 	// A path that is simply not in a repo at all is the ordinary case and is not
 	// reported here.
 	NotWalkable string
+
+	// Unresolved is why no ops repo could be inferred from the working
+	// directory, when that is the outcome. Path is empty in that case and the
+	// server still starts: every tool refuses with NO_OPS_REPO instead. Only an
+	// inferred path lands here — a designated MCP_OPS_REPO_PATH that is broken is
+	// a misconfiguration and still exits at startup.
+	Unresolved string
 
 	// MarkerWaived records that the ops-repo marker was actually absent and
 	// MCP_ALLOW_ANY_CWD_REPO=1 is what let startup continue. It is false when the
@@ -338,21 +359,25 @@ func resolveOpsRepoPath() opsRepoResolution {
 		return res
 	}
 
+	unresolved := func(format string, a ...any) opsRepoResolution {
+		return opsRepoResolution{Source: opsRepoPathCwd, Unresolved: fmt.Sprintf(format, a...)}
+	}
+
 	wd, err := os.Getwd()
 	if err != nil {
-		fatal(codeConfigError, fmt.Sprintf("%s is not set and the working directory cannot be determined (%v). Set %s to the ops repo clone.", opsRepoPathEnv, err, opsRepoPathEnv))
+		return unresolved("the working directory cannot be determined (%v)", err)
 	}
 	canonical, err := canonicalDir(wd)
 	if err != nil {
-		fatal(codeConfigError, fmt.Sprintf("%s is not set and the working directory %q is unusable: %v. Set %s to the ops repo clone.", opsRepoPathEnv, wd, err, opsRepoPathEnv))
+		return unresolved("the working directory %q is unusable: %v", wd, err)
 	}
 	root, err := gitWorkTreeRoot(canonical)
 	if err != nil {
-		fatal(codeConfigError, fmt.Sprintf("%s is not set, so the working directory %q would be used as the ops repo, but %v. Open the client in an ops repo clone, or set %s.", opsRepoPathEnv, canonical, err, opsRepoPathEnv))
+		return unresolved("the working directory is %q, and %v", canonical, err)
 	}
 	markerErr := opsRepoMarkerPresent(root)
 	if markerErr != nil && os.Getenv(allowAnyCwdRepoEnv) != "1" {
-		fatal(codeConfigError, fmt.Sprintf("%s is not set, so the working directory resolved to the git repo %q, but %v. Commit a %s at that repo's root to mark it as an ops repo, or set %s to designate the repo explicitly, or set %s=1 to deploy into any git repo the client is opened in.", opsRepoPathEnv, root, markerErr, repoConfigFileName, opsRepoPathEnv, allowAnyCwdRepoEnv))
+		return unresolved("the working directory is in the git repo %q, but %v (%s=1 accepts any git repo)", root, markerErr, allowAnyCwdRepoEnv)
 	}
 	return opsRepoResolution{
 		Path:         root,

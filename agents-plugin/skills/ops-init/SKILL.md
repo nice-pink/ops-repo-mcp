@@ -23,9 +23,11 @@ inside that repository. It does two jobs:
   check only applies on that inferred path: a client that sets `MCP_OPS_REPO_PATH` never
   needs the file, and `MCP_ALLOW_ANY_CWD_REPO=1` waives it.
 
-This skill writes a file. It calls no tool, which is the point: the server exits at startup
-on a missing marker or a bad layout, so at the moment you most need this the `deploy`,
-`promote` and `rollback` tools are not there to help.
+This skill writes a file and calls no tool, which is the point: at the moment you most need
+it, the tools cannot help. Without a marker the server starts but has no repo, so `deploy`,
+`promote` and `rollback` all return `NO_OPS_REPO` — that error is the usual reason to reach
+for this skill. A bad layout is worse: the server exits at startup and the tools are not
+registered at all.
 
 The marker is not the only thing an inferred repo has to satisfy. Its HEAD must resolve too,
 which a repo with no commits yet does not — likely here, since a brand-new ops repo is often
@@ -218,7 +220,9 @@ client's `env` block. Say that plainly rather than looking for another way in.
    unpushed config blocks the very call you are about to make to verify it. Stage only this
    file. Push to the branch you named in `branch:` — the config can only be verified on the
    branch it declares, and committing it to a feature branch gives `BRANCH_NOT_ALLOWED`.
-3. **Restart the MCP client.** The file is read **once, at startup**. Nothing about the
+3. **Restart the MCP client.** The file is read **once, at startup**, and so is the
+   decision about which repo the server works on — a server that came up with `NO_OPS_REPO`
+   keeps returning it until it is relaunched. Nothing about the
    running server changes when you write it, so a tool that failed a moment ago will keep
    failing until the client relaunches the server. Say this explicitly — it is the most
    common reason someone concludes the config "did not work".

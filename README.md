@@ -235,6 +235,16 @@ whichever one you have the client open in, and the same user-level config works
 everywhere. Set the variable when you want one server pinned to one clone
 regardless of where the client is opened.
 
+When no ops repo can be inferred — the directory is not in a git repo, its HEAD
+does not resolve, or it carries no marker — **the server still starts**. It
+registers the three tools and every call returns `NO_OPS_REPO` naming the
+reason. A server launched in every session, as a user-scoped plugin is, would
+otherwise sit permanently failed in the client's server list for the ordinary
+case of "this session is not an ops repo", which is indistinguishable from a
+real breakage. Nothing can be written without a resolved repo, so starting is
+safe. A designated `MCP_OPS_REPO_PATH` that is broken is a different thing — a
+misconfiguration — and still exits at startup.
+
 An inferred repo must **carry a `.ops-repo-mcp.yaml` at its root**. The file is
 otherwise optional, but on this path it doubles as the marker that says a human
 intended this repository to be deployed from. A git repo on its own is not that
@@ -527,7 +537,7 @@ Error:
 ```
 
 Error codes: `INVALID_INPUT`, `ENV_NOT_ALLOWED`, `SAME_ENV`, `PATH_ESCAPE`,
-`REPO_NOT_FOUND`, `CONFIG_ERROR`, `DIRTY_REPO`, `BRANCH_NOT_ALLOWED`,
+`NO_OPS_REPO`, `REPO_NOT_FOUND`, `CONFIG_ERROR`, `DIRTY_REPO`, `BRANCH_NOT_ALLOWED`,
 `BRANCH_AHEAD`, `NO_UPSTREAM`, `PULL_FAILED`, `NO_CURRENT_TAG`,
 `NO_PREVIOUS_VERSION`, `MULTI_LINE_CHANGE`, `RUNNER_FAILED`, `RUNNER_PANIC`,
 `RUNNER_TIMEOUT`, `LOCK_TIMEOUT`.

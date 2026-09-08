@@ -44,6 +44,7 @@ func main() {
 	slog.Default().Info("server_start",
 		"opsRepo", cfg.OpsRepoPath,
 		"opsRepoSource", cfg.OpsRepoPathSource,
+		"opsRepoAvailable", cfg.OpsRepoUnavailable == "",
 		"envAllowlist", cfg.EnvAllowlist,
 		"runnerTimeoutS", cfg.RunnerTimeout.Seconds(),
 		"lockTimeoutS", cfg.LockTimeout.Seconds(),
@@ -82,6 +83,15 @@ func main() {
 			"msg", "DS_SRC_PATH is set but ignored by ops-repo-mcp; the ops repo is "+opsRepoPathEnv+", or the working directory when that is unset",
 		)
 	}
+	if cfg.OpsRepoUnavailable != "" {
+		// Error level, like the other acknowledgements: an operator scanning for
+		// why a tool refused must find this even with MCP_LOG_LEVEL=error. The
+		// server is up and healthy — it just has nothing to act on.
+		slog.Default().Error("ops_repo_unavailable",
+			"reason", cfg.OpsRepoUnavailable,
+			"msg", "started with no ops repo: every tool will refuse with NO_OPS_REPO until the client is opened in a repo carrying "+repoConfigFileName+", or "+opsRepoPathEnv+" names one",
+		)
+	}
 	if cfg.OpsRepoPathNormalisedFrom != "" {
 		slog.Default().Info("ops_repo_normalised",
 			"given", cfg.OpsRepoPathNormalisedFrom,
@@ -89,7 +99,7 @@ func main() {
 			"msg", opsRepoPathEnv+" points inside a git work tree; using its root, which is what every manifest path is relative to",
 		)
 	}
-	if cfg.OpsRepoPathSource == opsRepoPathCwd {
+	if cfg.OpsRepoPathSource == opsRepoPathCwd && cfg.OpsRepoUnavailable == "" {
 		slog.Default().Warn("ops_repo_from_cwd",
 			"opsRepo", cfg.OpsRepoPath,
 			"msg", "MCP_OPS_REPO_PATH is not set, so the working directory the client launched this server in is being used as the ops repo. Set MCP_OPS_REPO_PATH to pin one clone.",
@@ -101,11 +111,13 @@ func main() {
 		)
 	}
 
-	slog.Default().Info("branch_guard",
-		"allowedBranches", cfg.AllowedBranches,
-		"source", cfg.AllowedBranchSource,
-	)
-	if len(cfg.AllowedBranches) == 0 {
+	if cfg.OpsRepoUnavailable == "" {
+		slog.Default().Info("branch_guard",
+			"allowedBranches", cfg.AllowedBranches,
+			"source", cfg.AllowedBranchSource,
+		)
+	}
+	if len(cfg.AllowedBranches) == 0 && cfg.OpsRepoUnavailable == "" {
 		slog.Default().Warn("branch_guard_inferred",
 			"msg", "no MCP_ALLOWED_BRANCHES and no branch in "+repoConfigFileName+"; the allowed branch is inferred from refs/remotes/origin/HEAD, and if the ops repo has no such ref the branch check is skipped entirely",
 		)
