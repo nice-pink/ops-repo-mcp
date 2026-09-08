@@ -43,4 +43,4 @@ deploy:
 	shown="none"; [ -z "$$latest" ] || shown="v$$latest"; \
 	printf 'latest:  %s\n' "$$shown"; \
 	printf 'created: %s on %s (%s)\n' "$$tag" "$$(git rev-parse --short HEAD)" "$$(git branch --show-current)"; \
-	printf '\nTo publish:\n  git push origin %s\n' "$$tag"
+	git push origin "$$tag"
