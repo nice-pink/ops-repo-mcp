@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "deploy-promote": {
-      "command": "mcp-server",
+      "command": "ops-repo-mcp",
       "args": [],
       "env": {
         "MCP_OPS_REPO_PATH": "${MCP_OPS_REPO_PATH:-}",

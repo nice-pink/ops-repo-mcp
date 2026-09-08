@@ -94,7 +94,7 @@ Four things to check before you believe the derivation:
   call with `INVALID_INPUT`. If segments do not match, stop and tell the user — this is not
   something the config can fix.
 - **Whether the image name matches the app name.** The tag rewrite matches on the image's
-  last path segment, which defaults to the app name. `ghcr.io/nice-pink/poma-mcp-server:1.2`
+  last path segment, which defaults to the app name. `ghcr.io/nice-pink/poma-ops-repo-mcp:1.2`
   under a directory named `poma-mcp` does not match, and deploy fails with `RUNNER_FAILED`
   *could not set tag* — after startup validated fine. Check the sampled manifests, and route
   mismatches to `exceptionalAppsFile` below.

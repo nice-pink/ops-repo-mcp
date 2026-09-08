@@ -7,7 +7,7 @@ This plugin ships three things:
 - **`skills/ops-init`** — writes the `.ops-repo-mcp.yaml` an ops repo needs, deriving the
   layout from the repo's own manifest tree. It calls no tool, so it works while the server
   is still refusing to start.
-- **One MCP server** — `deploy-promote`, the `mcp-server` binary from this repository, run
+- **One MCP server** — `deploy-promote`, the `ops-repo-mcp` binary from this repository, run
   over stdio. It provides the `deploy`, `promote`, and `rollback` tools.
 
 The server is **local only**. It rewrites files in a clone of your ops repo on this
@@ -23,18 +23,18 @@ curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install
 
 It lands in `/usr/local/bin` when writable, else `~/.local/bin`, and prints the install
 path plus a ready-to-paste `.mcp.json` snippet. `make build` or
-`go install github.com/nice-pink/ops-repo-mcp/cmd/mcp-server@latest` work too. Full
+`go install github.com/nice-pink/ops-repo-mcp/cmd/ops-repo-mcp@latest` work too. Full
 options — version pinning, checksums, manual download — are in the
 [repo README](https://github.com/nice-pink/ops-repo-mcp#install).
 
-Every config below uses the bare command name `mcp-server`, which requires the install
+Every config below uses the bare command name `ops-repo-mcp`, which requires the install
 directory to be on `PATH`. MCP clients do not always inherit your shell `PATH`; if the
-server fails to start, replace `mcp-server` with the absolute path the installer printed.
+server fails to start, replace `ops-repo-mcp` with the absolute path the installer printed.
 
 Verify it runs:
 
 ```bash
-mcp-server --version
+ops-repo-mcp --version
 ```
 
 ## Configure the environment
@@ -245,7 +245,7 @@ change to the manifest before pushing it:
 claude plugin marketplace add "$PWD" && claude plugin install ops-repo@nice-pink
 ```
 
-Installing the plugin does **not** install the `mcp-server` binary. Each teammate still
+Installing the plugin does **not** install the `ops-repo-mcp` binary. Each teammate still
 needs it on `PATH` — the plugin ships the skills and the server declaration, not the
 server. They do not need `MCP_OPS_REPO_PATH`: unset, each session operates on the ops repo
 that session is open in, provided it carries a `.ops-repo-mcp.yaml`.
@@ -275,7 +275,7 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "deploy-promote": {
-      "command": "mcp-server",
+      "command": "ops-repo-mcp",
       "args": [],
       "env": {
         "MCP_ENV_ALLOWLIST": "dev,staging,prod"
@@ -314,7 +314,7 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.deploy-promote]
-command = "mcp-server"
+command = "ops-repo-mcp"
 args = []
 
 [mcp_servers.deploy-promote.env]
@@ -332,7 +332,7 @@ Verify with `codex mcp list`.
 
 | Symptom | Cause |
 |---|---|
-| Skills load, no `deploy` / `promote` / `rollback` tools | The server process is not starting. Run `mcp-server --version` by hand, then check the client's stderr log — the server exits at startup on `REPO_NOT_FOUND` and `CONFIG_ERROR`. |
+| Skills load, no `deploy` / `promote` / `rollback` tools | The server process is not starting. Run `ops-repo-mcp --version` by hand, then check the client's stderr log — the server exits at startup on `REPO_NOT_FOUND` and `CONFIG_ERROR`. |
 | Server exits immediately, `CONFIG_ERROR: MCP_ENV_ALLOWLIST is empty` | No environment allowlist. Set `MCP_ENV_ALLOWLIST` to the environments this server may write to, or `MCP_ALLOW_ALL_ENVS=1` to accept every one including prod. |
 | Server exits immediately, `CONFIG_ERROR: ... not inside a git work tree` | `MCP_OPS_REPO_PATH` is unset and the working directory the client launched the server in is not in a git repo. Open the client in an ops repo clone, or set the variable. |
 | Server exits immediately, `CONFIG_ERROR: ... carries no .ops-repo-mcp.yaml` | The inferred repo is not marked as an ops repo. Run the `ops-init` skill to write one, or set `MCP_OPS_REPO_PATH`, or set `MCP_ALLOW_ANY_CWD_REPO=1`. |
@@ -340,7 +340,7 @@ Verify with `codex mcp list`.
 | `PULL_FAILED` against a private remote that used to work | `GITHUB_TOKEN` is no longer adopted when the ops repo is inferred from the working directory. Set `MCP_GIT_TOKEN`, or set `MCP_OPS_REPO_PATH`. |
 | Server exits immediately, `REPO_NOT_FOUND` | The variable *is* set, but the path does not exist, is not a directory, or its symlinks cannot be resolved. |
 | Tools work but write to the wrong repo | `MCP_OPS_REPO_PATH` is unset and the client launched the server somewhere other than the repo you expected. Check `opsRepo` / `opsRepoSource` in the `server_start` stderr line, then set the variable to pin it. |
-| `spawn mcp-server ENOENT` | The install directory is not on the `PATH` the client sees. Use the absolute path the installer printed. |
+| `spawn ops-repo-mcp ENOENT` | The install directory is not on the `PATH` the client sees. Use the absolute path the installer printed. |
 | Nothing loads in Claude Code | Wrong directory passed to `--plugin-dir`. It must be `agents-plugin`, the directory holding `skills/`. |
 | Installed via `npx plugins add`, skills work, no tools | The CLI did not pick up `.mcp.json`. Declare the server manually per the routes above. |
 | Every call returns `DIRTY_REPO` | A previous mutation was never committed. The server refuses to work on a dirty tree. `git -C <ops-repo> status` and either commit or discard. |

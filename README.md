@@ -37,7 +37,7 @@ go test ./...
 ```
 
 `examples/` is a copy of the repo-services fixture tree. It is what
-`cmd/mcp-server/stdout_safety_test.go` runs against — that test asserts the
+`cmd/ops-repo-mcp/stdout_safety_test.go` runs against — that test asserts the
 runner writes nothing to stdout, because any stdout write corrupts the MCP
 JSON-RPC framing. If `examples/repo` goes missing the test **skips** rather
 than fails, so keep it in place.
@@ -64,23 +64,23 @@ sudo env INSTALL_DIR=/usr/local/bin sh install.sh
 ```
 
 On success the script prints the install path, the output of
-`mcp-server --version`, and a ready-to-paste `.mcp.json` snippet with the
+`ops-repo-mcp --version`, and a ready-to-paste `.mcp.json` snippet with the
 correct `command` path filled in.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `INSTALL_DIR` | `/usr/local/bin` if writable, else `~/.local/bin` | Target directory. Created if missing. |
-| `VERSION` | latest `v*` release | Pin a specific release tag, e.g. `v2`. Drafts and prereleases are never auto-selected; a prerelease can be pinned explicitly, a draft cannot be installed at all (no tag, no public download path). |
+| `VERSION` | latest `v*` release | Pin a specific release tag, e.g. `v4`. Releases up to `v3` shipped the binary as `mcp-server` and cannot be installed by this script — it says so rather than reporting a bare download failure. Drafts and prereleases are never auto-selected; a prerelease can be pinned explicitly, a draft cannot be installed at all (no tag, no public download path). |
 | `GITHUB_TOKEN` | _(none)_ | Sent only to the GitHub API, to lift the unauthenticated rate limit when resolving the latest release. Never sent with the asset download. |
 | `SKIP_CHECKSUM` | `0` | Set to `1` to install without verifying the SHA-256. Only useful if `checksums.txt` is missing from a release or no `sha256sum`/`shasum` is available. |
 
 Downgrading or pinning:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install.sh | VERSION=v2 sh
+curl -fsSL https://raw.githubusercontent.com/nice-pink/ops-repo-mcp/main/install.sh | VERSION=v4 sh
 ```
 
-To uninstall, delete the binary (`rm "$(command -v mcp-server)"`). The script
+To uninstall, delete the binary (`rm "$(command -v ops-repo-mcp)"`). The script
 writes nothing else — no config, no shell-profile edits.
 
 Requirements: `curl` or `wget`, plus `tar`, `awk`, `grep`, `mktemp`, `uname`,
@@ -98,6 +98,14 @@ If `~/.local/bin` is not on your `PATH`, the script says so and prints the
 `export` line to add. MCP clients are usually given an absolute path anyway,
 so `PATH` only matters for running the binary by hand.
 
+The binary was called `mcp-server` up to release `v3`. It is `ops-repo-mcp` from
+`v4` on — the old name collided with every other MCP server on `PATH`, which is
+the whole population of binaries it sits next to. Until `v4` is published the
+`install.sh` on `main` has nothing it can install, because the newest release
+still carries the old asset names; it reports that specifically. Each release
+also carries the `install.sh` it was built with, so an older release stays
+installable through its own copy.
+
 ### Manual download
 
 Grab the tarball for your platform from the
@@ -108,10 +116,10 @@ verify it against `checksums.txt`:
 # linux
 sha256sum --ignore-missing -c checksums.txt
 # macOS (anchor on ": OK" — a bare grep for the filename matches ": FAILED" too)
-shasum -a 256 -c checksums.txt 2>/dev/null | grep "^mcp-server_darwin_arm64.tar.gz: OK"
+shasum -a 256 -c checksums.txt 2>/dev/null | grep "^ops-repo-mcp_darwin_arm64.tar.gz: OK"
 
-tar -xzf mcp-server_darwin_arm64.tar.gz
-install -m 0755 mcp-server /usr/local/bin/mcp-server
+tar -xzf ops-repo-mcp_darwin_arm64.tar.gz
+install -m 0755 ops-repo-mcp /usr/local/bin/ops-repo-mcp
 ```
 
 ### From source
@@ -120,7 +128,7 @@ install -m 0755 mcp-server /usr/local/bin/mcp-server
 make build
 ```
 
-Produces `bin/mcp-server`. `go install github.com/nice-pink/ops-repo-mcp/cmd/mcp-server@latest`
+Produces `bin/ops-repo-mcp`. `go install github.com/nice-pink/ops-repo-mcp/cmd/ops-repo-mcp@latest`
 also works and lands the binary in `$(go env GOPATH)/bin`.
 
 ## Agent plugin
@@ -175,7 +183,7 @@ the tarballs, `checksums.txt`, and `install.sh`. `make deploy` never pushes on
 its own.
 
 The tag's version (minus the prefix) is compiled into the binary via
-`-ldflags -X main.serverVersion=...` and reported by `mcp-server --version`.
+`-ldflags -X main.serverVersion=...` and reported by `ops-repo-mcp --version`.
 The prefix is what `install.sh` filters the release listing on, so releases
 cut under any other tag name will not be found by the installer.
 
@@ -199,7 +207,7 @@ Once the ops repo carries the file, a client entry needs almost nothing:
 {
   "mcpServers": {
     "deploy-promote": {
-      "command": "/absolute/path/to/ops-repo-mcp/bin/mcp-server",
+      "command": "/absolute/path/to/ops-repo-mcp/bin/ops-repo-mcp",
       "args": [],
       "env": {
         "MCP_ENV_ALLOWLIST": "dev,staging,prod"

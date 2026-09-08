@@ -1,7 +1,7 @@
 # ops-repo — agent plugin
 
 An [Agent Plugin](https://agent-plugins.org) (spec 1.0.0) that gives any supporting agent
-the `mcp-server` binary from this repository: change an application's container image tag
+the `ops-repo-mcp` binary from this repository: change an application's container image tag
 in a GitOps ops repo, then commit the change deliberately.
 
 ## Contents
@@ -48,7 +48,7 @@ machine, so there is nothing hosted to point at. Install the binary
 {
   "deploy-promote": {
     "type": "stdio",
-    "command": "mcp-server",
+    "command": "ops-repo-mcp",
     "args": [],
     "env": {
       "MCP_ENV_ALLOWLIST": "dev,staging,prod"
@@ -167,7 +167,7 @@ it, rather than asking a user to recite a path scheme they may never have writte
 `plugin.json` and the skills' `metadata.version` track the MCP server version they
 document (currently `0.1.0`). That is a released server version, i.e. a `v<N>` release
 tag minus its `v` — not the `serverVersion` default in
-[`cmd/mcp-server/main.go`](../cmd/mcp-server/main.go), which is `dev` and only labels
+[`cmd/ops-repo-mcp/main.go`](../cmd/ops-repo-mcp/main.go), which is `dev` and only labels
 unreleased local builds. When the tool surface or the response shape changes, update
 the skills and bump the version in all seven places:
 

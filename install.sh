@@ -12,7 +12,7 @@
 set -eu
 
 REPO="nice-pink/ops-repo-mcp"
-BIN="mcp-server"
+BIN="ops-repo-mcp"
 TAG_PREFIX="v"
 MAX_PAGES=5
 
@@ -133,7 +133,19 @@ base="https://github.com/${REPO}/releases/download/${version}"
 # ---- download and verify ---------------------------------------------------
 
 info "downloading ${asset} (${version})..."
-fetch "${base}/${asset}" "$tmp/$asset" || die "download failed: ${base}/${asset}"
+if ! fetch "${base}/${asset}" "$tmp/$asset"; then
+  # Releases up to v3 shipped the binary as "mcp-server". The rename to
+  # "ops-repo-mcp" means this script cannot find an asset in those, so say so
+  # rather than leaving a bare 404 to be interpreted as a network fault. No
+  # fallback to the old name: installing a binary this script cannot then name
+  # consistently is worse than refusing.
+  if fetch "${base}/mcp-server_${os}_${arch}.tar.gz" /dev/null 2>/dev/null; then
+    die "release ${version} predates the rename to '${BIN}' and ships 'mcp-server_${os}_${arch}.tar.gz' instead.
+  Install a later release, or use that release's own install.sh:
+  curl -fsSL https://github.com/${REPO}/releases/download/${version}/install.sh | VERSION=${version} sh"
+  fi
+  die "download failed: ${base}/${asset}"
+fi
 
 if [ "${SKIP_CHECKSUM:-0}" = "1" ]; then
   info "warning: SKIP_CHECKSUM=1, installing without verification"

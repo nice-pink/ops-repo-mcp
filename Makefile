@@ -3,9 +3,9 @@
 # Build the MCP server binary
 build:
 	mkdir -p bin/
-	go build -o bin/mcp-server ./cmd/mcp-server
+	go build -o bin/ops-repo-mcp ./cmd/ops-repo-mcp
 
-# Run tests. cmd/mcp-server/stdout_safety_test.go is the stdout-purity guard:
+# Run tests. cmd/ops-repo-mcp/stdout_safety_test.go is the stdout-purity guard:
 # it needs examples/repo present, and skips silently if that fixture is gone.
 test:
 	go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
@@ -14,7 +14,7 @@ vet:
 	go vet ./...
 
 clean:
-	rm -f bin/mcp-server cover.out
+	rm -f bin/ops-repo-mcp cover.out
 
 # Create the next release tag locally, without pushing it.
 #

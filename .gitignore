@@ -2,6 +2,9 @@
 */.DS_Store
 bin/
 dist/
+/ops-repo-mcp
+# stray binaries from before the rename, so they stay ignored rather than
+# becoming untracked files the next `git add -A` would sweep in
 /mcp-server
 cover.out
 .env

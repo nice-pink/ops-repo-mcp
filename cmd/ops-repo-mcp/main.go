@@ -79,7 +79,7 @@ func main() {
 	}
 	if cfg.SrcPathIgnored {
 		slog.Default().Warn("ds_src_path_ignored",
-			"msg", "DS_SRC_PATH is set but ignored by mcp-server; the ops repo is "+opsRepoPathEnv+", or the working directory when that is unset",
+			"msg", "DS_SRC_PATH is set but ignored by ops-repo-mcp; the ops repo is "+opsRepoPathEnv+", or the working directory when that is unset",
 		)
 	}
 	if cfg.OpsRepoPathNormalisedFrom != "" {

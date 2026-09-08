@@ -23,7 +23,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go vet ./...
-      # cmd/mcp-server/stdout_safety_test.go is the stdout-purity guard: any
+      # cmd/ops-repo-mcp/stdout_safety_test.go is the stdout-purity guard: any
       # write to stdout would corrupt the MCP JSON-RPC framing. repo-services
       # keeps the complementary `make audit-stdout` check over pkg/.
       - run: go test ./...
@@ -79,23 +79,23 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
-          name="mcp-server_${GOOS}_${GOARCH}"
+          name="ops-repo-mcp_${GOOS}_${GOARCH}"
           mkdir -p "dist/${name}"
           go build \
             -trimpath \
             -ldflags "-s -w -X main.serverVersion=${{ steps.version.outputs.version }}" \
-            -o "dist/${name}/mcp-server" \
-            ./cmd/mcp-server
-          tar -czf "dist/${name}.tar.gz" -C "dist/${name}" mcp-server
+            -o "dist/${name}/ops-repo-mcp" \
+            ./cmd/ops-repo-mcp
+          tar -czf "dist/${name}.tar.gz" -C "dist/${name}" ops-repo-mcp
           (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
 
       - name: Verify binary runs (native only)
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        run: ./dist/mcp-server_linux_amd64/mcp-server --version
+        run: ./dist/ops-repo-mcp_linux_amd64/ops-repo-mcp --version
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mcp-server_${{ matrix.goos }}_${{ matrix.goarch }}
+          name: ops-repo-mcp_${{ matrix.goos }}_${{ matrix.goarch }}
           path: |
             dist/*.tar.gz
             dist/*.sha256
